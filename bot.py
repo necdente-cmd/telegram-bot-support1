@@ -13,17 +13,15 @@ from openai import OpenAI
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     # Для теста можно вставить жёстко, но лучше использовать переменную
-    TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"  # ← ваш токен
+    TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"
 
-# ID группы (используется для проверки, но пока отключена)
 GROUP_CHAT_ID = -4462437609
-
 DEFAULT_RESPONSIBLE = ["tunduk_dev", "tunduk_analyst"]
-ADMIN_IDS = [549890508]  # ваш ID
-BOT_USERNAME = "oz_support_bot"  # username вашего бота (без @)
-RESPONSIBLE_USER = "@analyst"  # кому отправлять уведомления
+ADMIN_IDS = [549890508]  # ваш Telegram ID
+BOT_USERNAME = "Jardam4y_bot"  # username вашего бота (без @)
+RESPONSIBLE_USER = "@Bermet_Kadyrbekova"  # кому отправлять уведомления
 
-MORNING_TIME_UTC = "03:00"
+MORNING_TIME_UTC = "03:00"  # 09:00 по Бишкеку (UTC+6)
 TIMEZONE_OFFSET = 6
 
 PRIORITY_REMINDER_MINUTES = {
@@ -32,36 +30,20 @@ PRIORITY_REMINDER_MINUTES = {
     "low": 30
 }
 
-# ---------- КЛЮЧЕВЫЕ СЛОВА ----------
-KEYWORDS = [
-    "система не работает",
-    "sanarip не работает",
-    "санарип не работет",
-    "база зависает",
-    "база катып жатат",
-    "база жай иштеп жатат",
-    "база иштебей калды",
-    "система медленно работает",
-    "не работает",
-    "ошибка",
-    "баг",
-    "глюк",
-    "завис",
-    "не открывается",
-    "не грузит",
-    "проблема",
-    "система тутап калды",
-    "система жай иштейт",
-    "санприп иштебей калды",
-    "санприп жай иштейт"
+# ---------- РАЗНООБРАЗНЫЕ СОВЕТЫ ----------
+ADVICE_LIST = [
+    "🔄 Попробуйте очистить кэш браузера и перезагрузить страницу.",
+    "👤 Попробуйте выйти из профиля и зайти заново (перезайти).",
+    "🌐 Проверьте интернет-соединение – возможно, проблемы с сетью.",
+    "🧹 Очистите cookies и кэш, затем обновите страницу (Ctrl+F5).",
+    "🔁 Попробуйте использовать другой браузер или режим инкогнито.",
+    "⏳ Проверьте, не ведутся ли технические работы на сайте.",
+    "📞 Если ничего не помогает, обратитесь к администратору системы.",
+    "💾 Попробуйте перезагрузить устройство (компьютер/телефон)."
 ]
 
-def check_keywords(text: str) -> bool:
-    lower = text.lower()
-    for kw in KEYWORDS:
-        if kw in lower:
-            return True
-    return False
+def get_random_advice():
+    return random.choice(ADVICE_LIST)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -130,12 +112,6 @@ def init_db():
         new_value TEXT,
         created_at TIMESTAMP
     )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS votes (
-        issue_id INTEGER,
-        user_id INTEGER,
-        vote INTEGER,
-        PRIMARY KEY (issue_id, user_id)
-    )''')
     c.execute('''CREATE TABLE IF NOT EXISTS banned_users (
         user_id INTEGER PRIMARY KEY,
         reason TEXT,
@@ -149,14 +125,90 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS keywords (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        word TEXT UNIQUE
+    )''')
+    # Добавляем начальные данные
     for username in DEFAULT_RESPONSIBLE:
         c.execute("INSERT OR IGNORE INTO responsible_users (username) VALUES (?)", (username,))
+    initial_keywords = [
+        "система не работает", "sanarip не работает", "санарип не работет",
+        "база зависает", "база катып жатат", "база жай иштеп жатат", "база катып калды",
+        "база иштебей калды", "система медленно работает", "не работает",
+        "ошибка", "баг", "глюк", "завис", "не открывается", "не грузит",
+        "проблема", "система токтом калды", "система жай иштейт",
+        "санарип иштебей калды", "санарип жай иштеп калды", "санарип жай иштейт"
+    ]
+    for kw in initial_keywords:
+        c.execute("INSERT OR IGNORE INTO keywords (word) VALUES (?)", (kw,))
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_close_days', '14')")
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")
 
+# ---------- ЗАГРУЗКА КЛЮЧЕВЫХ СЛОВ ----------
+def load_keywords():
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("SELECT word FROM keywords")
+    rows = c.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
+
+KEYWORDS = load_keywords()
+
+def check_keywords(text: str) -> bool:
+    lower = text.lower()
+    for kw in KEYWORDS:
+        if kw in lower:
+            return True
+    return False
+
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
+def get_responsible_list():
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("SELECT username FROM responsible_users ORDER BY username")
+    rows = c.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
+
+def add_responsible(username):
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO responsible_users (username) VALUES (?)", (username,))
+    conn.commit()
+    conn.close()
+
+def remove_responsible(username):
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("DELETE FROM responsible_users WHERE username=?", (username,))
+    conn.commit()
+    conn.close()
+
+def add_keyword(word):
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO keywords (word) VALUES (?)", (word,))
+    conn.commit()
+    conn.close()
+    global KEYWORDS
+    KEYWORDS = load_keywords()
+
+def remove_keyword(word):
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("DELETE FROM keywords WHERE word=?", (word,))
+    conn.commit()
+    conn.close()
+    global KEYWORDS
+    KEYWORDS = load_keywords()
+
+def list_keywords():
+    return load_keywords()
+
 def get_issue_by_id(issue_id):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
@@ -186,7 +238,7 @@ def add_issue(message, issue_type, tags, responsible, priority, file_id="", file
     issue_id = c.lastrowid
     conn.commit()
     conn.close()
-    logger.info(f"Задача #{issue_id} создана")
+    add_audit_log(issue_id, message.from_user.id, "create", "", f"type={issue_type}, priority={priority}")
     return issue_id
 
 def update_priority(issue_id, priority, user_id):
@@ -225,25 +277,34 @@ def get_points(user_id):
     conn.close()
     return row[0] if row else 0
 
-def get_responsible_list():
+def get_top_users(limit=10):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    c.execute("SELECT username FROM responsible_users ORDER BY username")
+    c.execute("SELECT user_id, points FROM rating ORDER BY points DESC LIMIT ?", (limit,))
     rows = c.fetchall()
     conn.close()
-    return [row[0] for row in rows]
+    return rows
 
-def add_responsible(username):
+def is_banned(user_id):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO responsible_users (username) VALUES (?)", (username,))
+    c.execute("SELECT 1 FROM banned_users WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
+
+def ban_user(user_id, reason=""):
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO banned_users (user_id, reason, banned_at) VALUES (?, ?, ?)",
+              (user_id, reason, datetime.now()))
     conn.commit()
     conn.close()
 
-def remove_responsible(username):
+def unban_user(user_id):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    c.execute("DELETE FROM responsible_users WHERE username=?", (username,))
+    c.execute("DELETE FROM banned_users WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
 
@@ -291,6 +352,7 @@ def close_issue(issue_id, closer_id=None):
         c.execute("UPDATE issues SET status='closed', closed_at=? WHERE id=?", (datetime.now(), issue_id))
     conn.commit()
     conn.close()
+    add_audit_log(issue_id, closer_id or 0, "close", old[0] if old else "", "closed")
     if closer_id:
         add_points(closer_id, 2)
 
@@ -310,49 +372,6 @@ def add_comment(issue_id, user_id, user_name, text):
     conn.commit()
     conn.close()
     add_audit_log(issue_id, user_id, "comment", "", text)
-
-# ---------- АНАЛИЗ ИИ ----------
-async def analyze_with_ai(text: str):
-    if ai_client is None:
-        return {"type": "other", "reason": "AI недоступен"}
-    try:
-        response = ai_client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": """
-                Ты — классификатор сообщений для IT-команды.
-                Проанализируй сообщение и определи его тип:
-                - "bug": если пользователь сообщает об ошибке, проблеме или неработающей функции.
-                - "suggestion": если пользователь вносит предложение по улучшению, новую идею.
-                - "other": если сообщение не относится к первым двум категориям.
-                Ответь ТОЛЬКО в формате JSON: {"type": "тип", "reason": "краткая причина"}.
-                """},
-                {"role": "user", "content": text}
-            ],
-            response_format={"type": "json_object"}
-        )
-        return json.loads(response.choices[0].message.content)
-    except Exception as e:
-        logger.error(f"AI ошибка: {e}")
-        return {"type": "other", "reason": "Ошибка анализа"}
-
-async def answer_with_ai(question: str) -> str:
-    if ai_client is None:
-        return "❌ AI не настроен."
-    try:
-        if len(question) > 500:
-            return "⚠️ Вопрос слишком длинный (макс. 500 символов)."
-        response = ai_client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": "Ты — полезный и информативный ассистент."},
-                {"role": "user", "content": question}
-            ]
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logger.error(f"AI ответ ошибка: {e}")
-        return "❌ Ошибка при обработке вопроса."
 
 async def generate_title(text: str) -> str:
     if ai_client is None:
@@ -420,6 +439,48 @@ async def smart_priority(text: str):
         return detect_priority(text)
     except Exception:
         return detect_priority(text)
+
+async def analyze_with_ai(text: str):
+    if ai_client is None:
+        return {"type": "other", "reason": "AI недоступен"}
+    try:
+        response = ai_client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": """
+                Ты — классификатор сообщений для IT-команды.
+                Проанализируй сообщение и определи его тип:
+                - "bug": если пользователь сообщает об ошибке, проблеме или неработающей функции.
+                - "suggestion": если пользователь вносит предложение по улучшению, новую идею.
+                - "other": если сообщение не относится к первым двум категориям.
+                Ответь ТОЛЬКО в формате JSON: {"type": "тип", "reason": "краткая причина"}.
+                """},
+                {"role": "user", "content": text}
+            ],
+            response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        logger.error(f"AI ошибка: {e}")
+        return {"type": "other", "reason": "Ошибка анализа"}
+
+async def answer_with_ai(question: str) -> str:
+    if ai_client is None:
+        return "❌ AI не настроен."
+    try:
+        if len(question) > 500:
+            return "⚠️ Вопрос слишком длинный (макс. 500 символов)."
+        response = ai_client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "Ты — полезный и информативный ассистент."},
+                {"role": "user", "content": question}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"AI ответ ошибка: {e}")
+        return "❌ Ошибка при обработке вопроса."
 
 # ---------- СОЗДАНИЕ ЗАДАЧИ ----------
 async def create_issue_from_message(msg, issue_type, context, responsible=None):
@@ -515,7 +576,7 @@ async def create_issue_from_message(msg, issue_type, context, responsible=None):
     add_points(msg.from_user.id, 1)
     return issue_id
 
-# ---------- ОБРАБОТЧИК КНОПОК ПРИОРИТЕТА ----------
+# ---------- ОБРАБОТЧИКИ КНОПОК ----------
 async def priority_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -531,7 +592,6 @@ async def priority_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not issue:
         await query.edit_message_text("❌ Задача не найдена.")
         return
-    # Проверка прав (автор или админ)
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
     c.execute("SELECT author_id FROM issues WHERE id=?", (issue_id,))
@@ -557,7 +617,6 @@ async def priority_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == 'skip':
         await query.edit_message_text(f"⏩ Приоритет задачи #{issue_id} оставлен как авто.")
 
-# ---------- ОБРАБОТЧИК ПОДТВЕРЖДЕНИЯ ----------
 async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -646,7 +705,6 @@ async def handle_manual_responsible(update: Update, context: ContextTypes.DEFAUL
     msg = update.message
     if not msg or not msg.text:
         return
-    # Для отладки не проверяем chat_id
     text = msg.text.strip()
     mentions = extract_mentions(text)
     if not mentions:
@@ -663,7 +721,250 @@ async def handle_manual_responsible(update: Update, context: ContextTypes.DEFAUL
     del context.user_data['pending_for_responsible']
     del context.user_data['pending_issue']
 
-# ---------- ОСНОВНОЙ ОБРАБОТЧИК С КЛЮЧЕВЫМИ СЛОВАМИ ----------
+async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "advice_helped":
+        await query.edit_message_text("✅ Отлично! Рады, что помогли. Если будут ещё вопросы — обращайтесь.")
+    elif data == "advice_not_helped":
+        await query.edit_message_text("🔄 Ваш запрос принят. Сообщение отправлено аналитику системы.")
+        responsible = RESPONSIBLE_USER
+        if responsible.startswith('@'):
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text=f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} не смог решить проблему.\n"
+                     f"Сообщение: {context.user_data.get('last_problem_text', '')}\n"
+                     f"Ответственный: {responsible}"
+            )
+        else:
+            try:
+                await context.bot.send_message(
+                    chat_id=int(responsible),
+                    text=f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} сообщил о проблеме:\n{context.user_data.get('last_problem_text', '')}"
+                )
+            except:
+                pass
+
+# ---------- КОМАНДЫ ДЛЯ ВСЕХ ----------
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 Бот для поддержки пользователей системы.\n\n"
+        "Команды:\n"
+        "/help – показать это сообщение\n"
+        "/ask <вопрос> – задать вопрос ИИ\n"
+        "/rating – ваш рейтинг\n"
+        "/top – топ-10 пользователей по рейтингу\n"
+        "/list_responsible – список ответственных\n"
+        "/list_keywords – список ключевых слов\n\n"
+        "Просто опишите проблему — я дам совет. Если не поможет, я передам сообщение аналитику."
+    )
+
+async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("❓ Напишите вопрос после команды: /ask ваш вопрос")
+        return
+    question = " ".join(context.args)
+    if len(question) > 500:
+        await update.message.reply_text("⚠️ Вопрос слишком длинный (макс. 500 символов).")
+        return
+    await update.message.reply_text("🤔 Думаю...")
+    answer = await answer_with_ai(question)
+    cleaned = re.sub(r'\*\*(.*?)\*\*', r'\1', answer)
+    cleaned = re.sub(r'\*(.*?)\*', r'\1', cleaned)
+    cleaned = re.sub(r'_(.*?)_', r'\1', cleaned)
+    cleaned = re.sub(r'#{1,6}\s?', '', cleaned)
+    cleaned = re.sub(r'`(.*?)`', r'\1', cleaned)
+    cleaned = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', cleaned)
+    cleaned = cleaned.replace('*', '')
+    await update.message.reply_text(cleaned)
+
+async def rating_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "без юзернейма"
+    points = get_points(user_id)
+    await update.message.reply_text(f"📊 Ваш рейтинг:\nПользователь: @{username}\nОчки: {points}")
+
+async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    top_users = get_top_users(10)
+    if not top_users:
+        await update.message.reply_text("Пока нет рейтинга.")
+        return
+    response = "🏆 Топ-10 пользователей:\n"
+    for i, (uid, pts) in enumerate(top_users, 1):
+        conn = sqlite3.connect("issues.db")
+        c = conn.cursor()
+        c.execute("SELECT author_name FROM issues WHERE author_id=? LIMIT 1", (uid,))
+        row = c.fetchone()
+        conn.close()
+        name = row[0] if row else f"user_{uid}"
+        response += f"{i}. {name} – {pts} очков\n"
+    await update.message.reply_text(response)
+
+async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
+    data = context.job.data
+    issue_id = data["issue_id"]
+    chat_id = data["chat_id"]
+    if is_issue_resolved(issue_id):
+        return
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("SELECT reminder_sent, responsible FROM issues WHERE id=?", (issue_id,))
+    row = c.fetchone()
+    if row and row[0] == 1:
+        conn.close()
+        return
+    conn.close()
+    mark_reminder_sent(issue_id)
+    resp = row[1] if row and row[1] else ""
+    mentions = ""
+    if resp:
+        usernames = [u.strip() for u in resp.split(',') if u.strip()]
+        if usernames:
+            mentions = " " + " ".join([f"@{u}" for u in usernames])
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"⚠️ Напоминание! Задача #{issue_id} без ответа.{mentions}\nПросьба ответить."
+    )
+
+# ---------- УТРЕННЕЕ ПРИВЕТСТВИЕ ----------
+async def morning_greeting(context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(
+        chat_id=GROUP_CHAT_ID,
+        text="🌞 Доброе утро, коллеги! Желаем продуктивного дня!"
+    )
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("SELECT id, author_name, text, type, priority, created_at FROM issues WHERE status='open' ORDER BY created_at DESC LIMIT 10")
+    rows = c.fetchall()
+    conn.close()
+    if rows:
+        response = "📋 Открытые задачи:\n"
+        for row in rows:
+            issue_id, author, text, issue_type, priority, created = row
+            emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(priority, "")
+            created_str = created[:16] if isinstance(created, str) else created.strftime("%Y-%m-%d %H:%M")
+            response += f"#{issue_id} {issue_type} {emoji} от {author} ({created_str}): {text[:50]}...\n"
+        await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=response)
+    else:
+        await context.bot.send_message(chat_id=GROUP_CHAT_ID, text="🎉 Нет открытых задач!")
+
+# ---------- АДМИН-КОМАНДЫ ----------
+async def add_responsible_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if not context.args:
+        await update.message.reply_text("Укажите юзернейм: /add_responsible @username")
+        return
+    username = context.args[0].lstrip('@')
+    add_responsible(username)
+    await update.message.reply_text(f"✅ @{username} добавлен в список ответственных.")
+
+async def remove_responsible_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if not context.args:
+        await update.message.reply_text("Укажите юзернейм: /remove_responsible @username")
+        return
+    username = context.args[0].lstrip('@')
+    remove_responsible(username)
+    await update.message.reply_text(f"✅ @{username} удалён из списка ответственных.")
+
+async def list_responsible_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    resp_list = get_responsible_list()
+    if not resp_list:
+        await update.message.reply_text("Список ответственных пуст.")
+        return
+    response = "📋 Список ответственных:\n" + "\n".join([f"@{u}" for u in resp_list])
+    await update.message.reply_text(response)
+
+async def add_keyword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if not context.args:
+        await update.message.reply_text("Укажите ключевое слово: /add_keyword система не работает")
+        return
+    keyword = " ".join(context.args).strip().lower()
+    if not keyword:
+        await update.message.reply_text("Некорректное ключевое слово.")
+        return
+    add_keyword(keyword)
+    await update.message.reply_text(f"✅ Ключевое слово «{keyword}» добавлено.")
+
+async def remove_keyword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if not context.args:
+        await update.message.reply_text("Укажите ключевое слово: /remove_keyword система не работает")
+        return
+    keyword = " ".join(context.args).strip().lower()
+    if not keyword:
+        await update.message.reply_text("Некорректное ключевое слово.")
+        return
+    remove_keyword(keyword)
+    await update.message.reply_text(f"✅ Ключевое слово «{keyword}» удалено.")
+
+async def list_keywords_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kw_list = list_keywords()
+    if not kw_list:
+        await update.message.reply_text("Список ключевых слов пуст.")
+        return
+    response = "📋 Ключевые слова:\n" + "\n".join([f"• {kw}" for kw in kw_list])
+    await update.message.reply_text(response)
+
+async def ban_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if not context.args:
+        await update.message.reply_text("Укажите ID пользователя: /ban_user 123456789")
+        return
+    try:
+        user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Некорректный ID.")
+        return
+    ban_user(user_id, "Забанен администратором")
+    await update.message.reply_text(f"✅ Пользователь {user_id} забанен.")
+
+async def unban_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if not context.args:
+        await update.message.reply_text("Укажите ID пользователя: /unban_user 123456789")
+        return
+    try:
+        user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Некорректный ID.")
+        return
+    unban_user(user_id)
+    await update.message.reply_text(f"✅ Пользователь {user_id} разбанен.")
+
+async def list_banned_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("SELECT user_id, reason, banned_at FROM banned_users")
+    rows = c.fetchall()
+    conn.close()
+    if not rows:
+        await update.message.reply_text("Забаненных пользователей нет.")
+        return
+    response = "🚫 Забаненные пользователи:\n"
+    for uid, reason, banned_at in rows:
+        response += f"ID: {uid} (причина: {reason or 'не указана'}, забанен: {banned_at[:16]})\n"
+    await update.message.reply_text(response)
+
+# ---------- ОСНОВНОЙ ОБРАБОТЧИК ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or not msg.text:
@@ -671,6 +972,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = msg.text
     logger.info(f"Получено сообщение: {text} от {msg.from_user.username} (chat_id: {msg.chat_id})")
+
+    if is_banned(msg.from_user.id):
+        await msg.reply_text("⛔ Вы забанены и не можете создавать задачи.")
+        return
 
     if msg.reply_to_message:
         issue = get_issue_by_reply(msg.reply_to_message.message_id)
@@ -682,7 +987,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.startswith('/'):
         return
 
-    # Проверяем, не является ли сообщение приветствием или вопросом к боту
     if f"@{BOT_USERNAME}" in text or is_greeting_or_question(text):
         await msg.reply_text(
             "👋 Привет! Я бот для регистрации багов и предложений.\n"
@@ -690,12 +994,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ---------- ПРОВЕРКА КЛЮЧЕВЫХ СЛОВ ----------
+    # Проверка ключевых слов
     if check_keywords(text):
         logger.info("Распознано по ключевым словам")
         issue_type = "bug"
-        advice = "Попробуйте перезагрузить страницу или проверить соединение. Если не поможет, обратитесь к аналитику."
-        # Создаём задачу без AI
+        # Берём случайный совет
+        advice = get_random_advice()
         title = await generate_title(text)
         tags_list = extract_tags(text)
         tags_str = ",".join(tags_list) if tags_list else ""
@@ -750,7 +1054,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_points(msg.from_user.id, 1)
         return
 
-    # ---------- ЛОГИКА С AI ----------
+    # AI-анализ
     if ai_client is not None:
         analysis = await analyze_with_ai(text)
         issue_type = analysis.get("type") if analysis else None
@@ -770,7 +1074,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # ---------- СТАРАЯ ЛОГИКА (ключевые слова) ----------
+    # Старая логика (ключевые слова)
     bug_pattern = r'\b(баг|ошибка|bug|не работает|глюк)\b'
     suggest_pattern = r'\b(предложени|улучшени|suggest|идея|хотелось бы)\b'
     issue_type = None
@@ -795,97 +1099,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ---------- ОБРАБОТЧИК КНОПОК "Помогло/Не помогло" ----------
-async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == "advice_helped":
-        await query.edit_message_text("✅ Отлично! Рады, что помогли. Если будут ещё вопросы — обращайтесь.")
-
-    elif data == "advice_not_helped":
-        await query.edit_message_text("🔄 Ваш запрос принят. Сообщение отправлено аналитику системы.")
-        responsible = RESPONSIBLE_USER
-        if responsible.startswith('@'):
-            await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                text=f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} не смог решить проблему.\n"
-                     f"Сообщение: {context.user_data.get('last_problem_text', '')}\n"
-                     f"Ответственный: {responsible}"
-            )
-        else:
-            try:
-                await context.bot.send_message(
-                    chat_id=int(responsible),
-                    text=f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} сообщил о проблеме:\n{context.user_data.get('last_problem_text', '')}"
-                )
-            except:
-                pass
-
-# ---------- КОМАНДЫ ----------
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 Бот для поддержки пользователей системы.\n\n"
-        "Команды:\n"
-        "/help – показать это сообщение\n"
-        "/ask <вопрос> – задать вопрос ИИ\n\n"
-        "Просто опишите проблему — я дам совет. Если не поможет, я передам сообщение аналитику."
-    )
-
-async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❓ Напишите вопрос после команды: /ask ваш вопрос")
-        return
-    question = " ".join(context.args)
-    if len(question) > 500:
-        await update.message.reply_text("⚠️ Вопрос слишком длинный (макс. 500 символов).")
-        return
-    await update.message.reply_text("🤔 Думаю...")
-    answer = await answer_with_ai(question)
-    cleaned = re.sub(r'\*\*(.*?)\*\*', r'\1', answer)
-    cleaned = re.sub(r'\*(.*?)\*', r'\1', cleaned)
-    cleaned = re.sub(r'_(.*?)_', r'\1', cleaned)
-    cleaned = re.sub(r'#{1,6}\s?', '', cleaned)
-    cleaned = re.sub(r'`(.*?)`', r'\1', cleaned)
-    cleaned = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', cleaned)
-    cleaned = cleaned.replace('*', '')
-    await update.message.reply_text(cleaned)
-
-async def joke_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    jokes = [
-        "— Почему программисты путают Хэллоуин и Рождество? — Потому что 31 Oct = 25 Dec.",
-        "— Сколько программистов нужно, чтобы заменить лампочку? — Ни одного, это аппаратная проблема.",
-        "— Что говорит программист, когда теряет работу? — 'Я оказался в бесконечном цикле без выхода.'",
-    ]
-    await update.message.reply_text(f"😂 {random.choice(jokes)}")
-
-async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
-    data = context.job.data
-    issue_id = data["issue_id"]
-    chat_id = data["chat_id"]
-    if is_issue_resolved(issue_id):
-        return
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("SELECT reminder_sent, responsible FROM issues WHERE id=?", (issue_id,))
-    row = c.fetchone()
-    if row and row[0] == 1:
-        conn.close()
-        return
-    conn.close()
-    mark_reminder_sent(issue_id)
-    resp = row[1] if row and row[1] else ""
-    mentions = ""
-    if resp:
-        usernames = [u.strip() for u in resp.split(',') if u.strip()]
-        if usernames:
-            mentions = " " + " ".join([f"@{u}" for u in usernames])
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=f"⚠️ Напоминание! Задача #{issue_id} без ответа.{mentions}\nПросьба ответить."
-    )
-
 def is_greeting_or_question(text):
     text_lower = text.lower()
     patterns = [r'\bпривет\b', r'\bздравствуй[те]?\b', r'\bсалам\b', r'\bhello\b', r'\bhi\b',
@@ -898,6 +1111,10 @@ def is_greeting_or_question(text):
 # ---------- ЗАПУСК ----------
 def main():
     init_db()
+    global KEYWORDS
+    KEYWORDS = load_keywords()
+    logger.info(f"Загружено {len(KEYWORDS)} ключевых слов")
+
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -905,11 +1122,33 @@ def main():
     app.add_handler(CallbackQueryHandler(confirm_callback, pattern="^(confirm_yes|confirm_no)$"))
     app.add_handler(CallbackQueryHandler(responsible_callback, pattern=r"^(resp_.+|resp_skip|resp_other)$"))
     app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
+
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ask", ask_command))
-    app.add_handler(CommandHandler("joke", joke_command))
+    app.add_handler(CommandHandler("rating", rating_command))
+    app.add_handler(CommandHandler("top", top_command))
 
-    logger.info("Второй бот (поддержка) с ключевыми словами запущен!")
+    app.add_handler(CommandHandler("add_responsible", add_responsible_command))
+    app.add_handler(CommandHandler("remove_responsible", remove_responsible_command))
+    app.add_handler(CommandHandler("list_responsible", list_responsible_command))
+    app.add_handler(CommandHandler("add_keyword", add_keyword_command))
+    app.add_handler(CommandHandler("remove_keyword", remove_keyword_command))
+    app.add_handler(CommandHandler("list_keywords", list_keywords_command))
+
+    app.add_handler(CommandHandler("ban_user", ban_user_command))
+    app.add_handler(CommandHandler("unban_user", unban_user_command))
+    app.add_handler(CommandHandler("list_banned", list_banned_command))
+
+    # Утреннее приветствие
+    if app.job_queue:
+        try:
+            morning_time = datetime.strptime(MORNING_TIME_UTC, "%H:%M").time()
+            app.job_queue.run_daily(morning_greeting, time=morning_time, days=tuple(range(7)))
+            logger.info(f"Утреннее приветствие запланировано на {MORNING_TIME_UTC} UTC")
+        except Exception as e:
+            logger.error(f"Ошибка планирования утреннего приветствия: {e}")
+
+    logger.info("Второй бот (поддержка) с админ-функциями и разнообразными советами запущен!")
     app.run_polling()
 
 if __name__ == "__main__":

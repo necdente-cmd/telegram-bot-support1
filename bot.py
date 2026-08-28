@@ -7,8 +7,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
 from openai import OpenAI
 
-# ---------- НАСТРОЙКИ (токен прямо в коде) ----------
-TOKEN = "8859549657:AAHm0xCj_SV76rOtk7GbTd8sYWy-CqywpBc"
+# ---------- НАСТРОЙКИ (токен обновлён) ----------
+TOKEN = "8603802519:AAE_wOUFZcrjE5aw1D13FuztM8fAWO-uEYE"
 
 GROUP_CHAT_ID = -4462437609
 RESPONSIBLE_USER = "@analyst"  # ← замените на реального ответственного

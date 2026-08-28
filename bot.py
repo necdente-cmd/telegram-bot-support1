@@ -3,7 +3,6 @@ import logging
 import sqlite3
 import json
 import re
-import asyncio
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
@@ -18,7 +17,7 @@ GROUP_CHAT_ID = -4462437609
 RESPONSIBLE_USER = "@analyst"  # ← замените на реального ответственного
 
 # DeepSeek API
-AI_API_KEY = os.environ.get("AI_BOT")
+AI_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 ai_client = None
 if AI_API_KEY:
     try:
@@ -32,24 +31,7 @@ else:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ---------- БАЗА ДАННЫХ ----------
-def init_db():
-    conn = sqlite3.connect("issues2.db")
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS problems (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        username TEXT,
-        text TEXT,
-        created_at TIMESTAMP,
-        resolved BOOLEAN DEFAULT 0,
-        notified BOOLEAN DEFAULT 0
-    )''')
-    conn.commit()
-    conn.close()
-    logger.info("База данных для второго бота инициализирована")
-
-# ---------- КЛЮЧЕВЫЕ СЛОВА (для быстрого ответа без ИИ) ----------
+# ---------- КЛЮЧЕВЫЕ СЛОВА ----------
 KEYWORDS = [
     "система не работает",
     "sanarip не работает",
@@ -74,12 +56,28 @@ KEYWORDS = [
 ]
 
 def check_keywords(text: str) -> bool:
-    """Проверяет, содержит ли текст одно из ключевых слов"""
     lower = text.lower()
     for kw in KEYWORDS:
         if kw in lower:
             return True
     return False
+
+# ---------- БАЗА ДАННЫХ ----------
+def init_db():
+    conn = sqlite3.connect("issues2.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS problems (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        text TEXT,
+        created_at TIMESTAMP,
+        resolved BOOLEAN DEFAULT 0,
+        notified BOOLEAN DEFAULT 0
+    )''')
+    conn.commit()
+    conn.close()
+    logger.info("База данных для второго бота инициализирована")
 
 # ---------- ФУНКЦИИ ИИ ----------
 async def analyze_with_ai(text: str):
@@ -177,13 +175,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"Получено сообщение: {text} от {msg.from_user.username}")
 
-    # 1. Проверяем ключевые слова (без ИИ)
+    # Проверяем ключевые слова
     if check_keywords(text):
         is_problem = True
-        advice = "Попробуйте перезагрузить страницу или проверить соединение с интернетом. Если не поможет, обратитесь к аналитику."
+        advice = "Попробуйте перезагрузить страницу или проверить соединение. Если не поможет, обратитесь к аналитику."
         logger.info("Распознано по ключевым словам")
     else:
-        # 2. Если ключевых слов нет, пробуем ИИ
         analysis = await analyze_with_ai(text)
         is_problem = analysis.get("is_problem", False)
         advice = analysis.get("advice", "")
@@ -255,11 +252,8 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ask", ask_command))
 
-    # Удаляем вебхук (на всякий случай)
-    async def delete_webhook():
-        await app.bot.delete_webhook()
-        logger.info("Webhook удалён")
-    asyncio.run(delete_webhook())
+    # Удаление вебхука убрано — для polling это не требуется.
+    # Библиотека сама управляет циклом событий.
 
     logger.info("Второй бот (поддержка) с ключевыми словами запущен!")
     app.run_polling()

@@ -15,7 +15,8 @@ if not TOKEN:
     # Для теста можно вставить жёстко, но лучше использовать переменную
     TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"
 
-GROUP_CHAT_ID = -4462437609
+# Пока оставляем ID, но будем использовать только для отправки уведомлений
+GROUP_CHAT_ID = -4462437609  # ← УБЕДИТЕСЬ, ЧТО ЭТО ПРАВИЛЬНОЕ ОТРИЦАТЕЛЬНОЕ ЧИСЛО
 DEFAULT_RESPONSIBLE = ["tunduk_dev", "tunduk_analyst"]
 ADMIN_IDS = [549890508]  # ваш Telegram ID
 BOT_USERNAME = "oz_support_bot"  # username вашего бота (без @)
@@ -176,7 +177,7 @@ def remove_keyword(word):
 def list_keywords():
     return load_keywords()
 
-# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ОТВЕТСТВЕННЫХ ----------
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 def get_responsible_list():
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
@@ -199,7 +200,6 @@ def remove_responsible(username):
     conn.commit()
     conn.close()
 
-# ---------- ОСНОВНЫЕ ФУНКЦИИ РАБОТЫ С ЗАДАЧАМИ ----------
 def get_issue_by_id(issue_id):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
@@ -299,6 +299,36 @@ def unban_user(user_id):
     conn.commit()
     conn.close()
 
+def extract_tags(text):
+    return re.findall(r'#\w+', text)
+
+def extract_mentions(text):
+    return re.findall(r'@(\w+)', text)
+
+def detect_priority(text):
+    text_lower = text.lower()
+    if re.search(r'критичн|срочн|high|critical', text_lower):
+        return 'high'
+    elif re.search(r'важн|medium|normal', text_lower):
+        return 'medium'
+    else:
+        return 'low'
+
+def is_issue_resolved(issue_id):
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("SELECT status FROM issues WHERE id=?", (issue_id,))
+    row = c.fetchone()
+    conn.close()
+    return row and row[0] == 'closed'
+
+def mark_reminder_sent(issue_id):
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("UPDATE issues SET reminder_sent=1 WHERE id=?", (issue_id,))
+    conn.commit()
+    conn.close()
+
 def close_issue(issue_id, closer_id=None):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
@@ -333,36 +363,6 @@ def add_comment(issue_id, user_id, user_name, text):
     conn.commit()
     conn.close()
     add_audit_log(issue_id, user_id, "comment", "", text)
-
-def mark_reminder_sent(issue_id):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("UPDATE issues SET reminder_sent=1 WHERE id=?", (issue_id,))
-    conn.commit()
-    conn.close()
-
-def is_issue_resolved(issue_id):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("SELECT status FROM issues WHERE id=?", (issue_id,))
-    row = c.fetchone()
-    conn.close()
-    return row and row[0] == 'closed'
-
-def extract_tags(text):
-    return re.findall(r'#\w+', text)
-
-def extract_mentions(text):
-    return re.findall(r'@(\w+)', text)
-
-def detect_priority(text):
-    text_lower = text.lower()
-    if re.search(r'критичн|срочн|high|critical', text_lower):
-        return 'high'
-    elif re.search(r'важн|medium|normal', text_lower):
-        return 'medium'
-    else:
-        return 'low'
 
 async def generate_title(text: str) -> str:
     if ai_client is None:
@@ -723,15 +723,11 @@ async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🔄 Ваш запрос принят. Сообщение отправлено аналитику системы.")
         responsible = RESPONSIBLE_USER
         if responsible.startswith('@'):
-            # Отправляем в группу с упоминанием
-            msg_text = (
-                f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} не смог решить проблему.\n"
-                f"Сообщение: {context.user_data.get('last_problem_text', 'Текст проблемы не сохранён')}\n"
-                f"Ответственный: {responsible}"
-            )
             await context.bot.send_message(
                 chat_id=GROUP_CHAT_ID,
-                text=msg_text
+                text=f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} не смог решить проблему.\n"
+                     f"Сообщение: {context.user_data.get('last_problem_text', '')}\n"
+                     f"Ответственный: {responsible}"
             )
             logger.info(f"Уведомление отправлено в группу {GROUP_CHAT_ID} для {responsible}")
         else:
@@ -744,7 +740,7 @@ async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Не удалось отправить уведомление в ЛС {responsible}: {e}")
 
-# ---------- КОМАНДЫ ----------
+# ---------- КОМАНДЫ ДЛЯ ВСЕХ ----------
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 Бот для поддержки пользователей системы.\n\n"
@@ -961,23 +957,14 @@ async def list_banned_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         response += f"ID: {uid} (причина: {reason or 'не указана'}, забанен: {banned_at[:16]})\n"
     await update.message.reply_text(response)
 
-# ---------- ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ ----------
-# Глобальный список ключевых слов (будет загружен в main)
-KEYWORDS = []
-
-def check_keywords(text: str) -> bool:
-    lower = text.lower()
-    for kw in KEYWORDS:
-        if kw in lower:
-            return True
-    return False
-
+# ---------- ОСНОВНОЙ ОБРАБОТЧИК ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or not msg.text:
         return
 
     text = msg.text
+    # Логируем ID чата, чтобы вы могли убедиться, что ID правильный
     logger.info(f"Получено сообщение: {text} от {msg.from_user.username} (chat_id: {msg.chat_id})")
 
     if is_banned(msg.from_user.id):
@@ -1006,9 +993,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("Распознано по ключевым словам")
         issue_type = "bug"
         advice = get_random_advice()
-        # Сохраняем текст проблемы для уведомления
-        context.user_data['last_problem_text'] = text
-
         title = await generate_title(text)
         tags_list = extract_tags(text)
         tags_str = ",".join(tags_list) if tags_list else ""
@@ -1033,6 +1017,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(priority, "")
         minutes = PRIORITY_REMINDER_MINUTES[priority]
         file_text = f"📎 Вложение: {file_url}" if file_url else ""
+        # Сохраняем текст для уведомления
+        context.user_data['last_problem_text'] = text
         keyboard = [
             [
                 InlineKeyboardButton("✅ Помогло", callback_data="advice_helped"),
@@ -1117,26 +1103,43 @@ def is_greeting_or_question(text):
             return True
     return False
 
+# Глобальный список ключевых слов (будет загружен в main)
+KEYWORDS = []
+
+def check_keywords(text: str) -> bool:
+    lower = text.lower()
+    for kw in KEYWORDS:
+        if kw in lower:
+            return True
+    return False
+
 # ---------- ЗАПУСК ----------
 def main():
+    # 1. Инициализируем базу данных
     init_db()
+
+    # 2. Загружаем ключевые слова
     global KEYWORDS
     KEYWORDS = load_keywords()
     logger.info(f"Загружено {len(KEYWORDS)} ключевых слов")
 
+    # 3. Создаём приложение
     app = Application.builder().token(TOKEN).build()
 
+    # Обработчик сообщений (без фильтра по chat_id – чтобы ловить все сообщения)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(priority_callback, pattern=r"^(set_priority_\d+_(high|medium|low)|skip_priority_\d+)$"))
     app.add_handler(CallbackQueryHandler(confirm_callback, pattern="^(confirm_yes|confirm_no)$"))
     app.add_handler(CallbackQueryHandler(responsible_callback, pattern=r"^(resp_.+|resp_skip|resp_other)$"))
     app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
 
+    # Команды
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ask", ask_command))
     app.add_handler(CommandHandler("rating", rating_command))
     app.add_handler(CommandHandler("top", top_command))
 
+    # Админ-команды
     app.add_handler(CommandHandler("add_responsible", add_responsible_command))
     app.add_handler(CommandHandler("remove_responsible", remove_responsible_command))
     app.add_handler(CommandHandler("list_responsible", list_responsible_command))

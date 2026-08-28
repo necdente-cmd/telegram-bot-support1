@@ -2,16 +2,13 @@ import os
 import logging
 import sqlite3
 import json
-import asyncio
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
 from openai import OpenAI
 
-# ---------- НАСТРОЙКИ ----------
-TOKEN = os.environ.get("BOT_TOKEN")
-if not TOKEN:
-    raise ValueError("BOT_TOKEN не задан в переменных окружения")
+# ---------- НАСТРОЙКИ (токен прямо в коде) ----------
+TOKEN = "8859549657:AAHm0xCj_SV76rOtk7GbTd8sYWy-CqywpBc"
 
 GROUP_CHAT_ID = -4462437609
 RESPONSIBLE_USER = "@analyst"  # ← замените на реального ответственного
@@ -164,8 +161,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
     app.add_handler(CommandHandler("help", help_command))
-
-    # Удаление вебхука убрано – оно не требуется для polling
 
     logger.info("Второй бот (поддержка) запущен!")
     app.run_polling()

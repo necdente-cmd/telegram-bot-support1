@@ -2,12 +2,14 @@ import os
 import logging
 import sqlite3
 import json
+import asyncio
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
 from openai import OpenAI
 
-# ---------- НАСТРОЙКИ (токен обновлён) ----------
+# ---------- НАСТРОЙКИ ----------
+# Новый токен (уже вставлен)
 TOKEN = "8603802519:AAE_wOUFZcrjE5aw1D13FuztM8fAWO-uEYE"
 
 GROUP_CHAT_ID = -4462437609
@@ -161,6 +163,13 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
     app.add_handler(CommandHandler("help", help_command))
+
+    # Принудительный сброс вебхука
+    async def delete_webhook():
+        await app.bot.delete_webhook()
+        logger.info("Webhook удалён")
+
+    asyncio.run(delete_webhook())
 
     logger.info("Второй бот (поддержка) запущен!")
     app.run_polling()

@@ -17,7 +17,7 @@ GROUP_CHAT_ID = -4462437609
 RESPONSIBLE_USER = "@analyst"  # ← замените на реального ответственного
 
 # DeepSeek API
-AI_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
+AI_API_KEY = os.environ.get("AI_BOT")
 ai_client = None
 if AI_API_KEY:
     try:
@@ -26,7 +26,7 @@ if AI_API_KEY:
     except Exception as e:
         logging.error(f"Ошибка инициализации AI: {e}")
 else:
-    logging.warning("DEEPSEEK_API_KEY не задан, ИИ-функции отключены")
+    logging.warning("AI_BOT не задан, ИИ-функции отключены")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

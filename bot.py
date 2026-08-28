@@ -16,10 +16,10 @@ if not TOKEN:
     TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"
 
 GROUP_CHAT_ID = -4462437609
-DEFAULT_RESPONSIBLE = ["Bermet_Kadyrbekova"", "tunduk_analyst"]
+DEFAULT_RESPONSIBLE = ["tunduk_dev", "tunduk_analyst"]
 ADMIN_IDS = [549890508]  # ваш Telegram ID
-BOT_USERNAME = "Jardam4y_bot"  # username вашего бота (без @)
-RESPONSIBLE_USER = "@Bermet_Kadyrbekova"  # кому отправлять уведомления
+BOT_USERNAME = "oz_support_bot"  # username вашего бота (без @)
+RESPONSIBLE_USER = "@analyst"  # кому отправлять уведомления
 
 MORNING_TIME_UTC = "03:00"  # 09:00 по Бишкеку (UTC+6)
 TIMEZONE_OFFSET = 6
@@ -134,11 +134,11 @@ def init_db():
         c.execute("INSERT OR IGNORE INTO responsible_users (username) VALUES (?)", (username,))
     initial_keywords = [
         "система не работает", "sanarip не работает", "санарип не работет",
-        "база зависает", "база катып жатат", "база жай иштеп жатат", "база катып калды",
+        "база зависает", "база катып жатат", "база жай иштеп жатат",
         "база иштебей калды", "система медленно работает", "не работает",
         "ошибка", "баг", "глюк", "завис", "не открывается", "не грузит",
-        "проблема", "система токтом калды", "система жай иштейт",
-        "санарип иштебей калды", "санарип жай иштеп калды", "санарип жай иштейт"
+        "проблема", "система тутап калды", "система жай иштейт",
+        "санприп иштебей калды", "санприп жай иштейт"
     ]
     for kw in initial_keywords:
         c.execute("INSERT OR IGNORE INTO keywords (word) VALUES (?)", (kw,))

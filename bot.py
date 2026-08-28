@@ -13,13 +13,13 @@ TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"
 
-GROUP_CHAT_ID = -1004462437609          # ID группы
-ADMIN_IDS = [549890508]                 # ваш Telegram ID
-BOT_USERNAME = "oz_support_bot"         # username бота
+GROUP_CHAT_ID = -1004462437609
+ADMIN_IDS = [549890508]
+BOT_USERNAME = "oz_support_bot"
 
-MORNING_TIME_UTC = "03:00"              # 09:00 по Бишкеку
+MORNING_TIME_UTC = "03:00"  # 09:00 по Бишкеку
 
-# ---------- РАЗНООБРАЗНЫЕ СОВЕТЫ ----------
+# ---------- СОВЕТЫ ----------
 ADVICE_LIST = [
     "🔄 Попробуйте очистить кэш браузера и перезагрузить страницу.",
     "👤 Попробуйте выйти из профиля и зайти заново (перезайти).",
@@ -37,7 +37,7 @@ def get_random_advice():
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ---------- НАСТРОЙКА ИИ (для /ask) ----------
+# ---------- ИИ (для /ask) ----------
 AI_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 ai_client = None
 if AI_API_KEY:
@@ -77,7 +77,7 @@ def init_db():
     ]
     for kw in initial_keywords:
         c.execute("INSERT OR IGNORE INTO keywords (word) VALUES (?)", (kw,))
-    # Начальные ответственные (если нужны)
+    # Начальные ответственные (можно оставить пустым или добавить)
     default_responsible = ["analyst"]  # без @
     for user in default_responsible:
         c.execute("INSERT OR IGNORE INTO responsible_users (username) VALUES (?)", (user,))
@@ -85,15 +85,30 @@ def init_db():
     conn.close()
     logger.info("База данных инициализирована")
 
-# ---------- РАБОТА С КЛЮЧЕВЫМИ СЛОВАМИ ----------
+# ---------- ФУНКЦИИ ЗАГРУЗКИ (с защитой от отсутствия таблиц) ----------
 def load_keywords():
     conn = sqlite3.connect("support.db")
     c = conn.cursor()
-    c.execute("SELECT word FROM keywords")
-    rows = c.fetchall()
+    try:
+        c.execute("SELECT word FROM keywords")
+        rows = c.fetchall()
+    except sqlite3.OperationalError:
+        rows = []
     conn.close()
     return [row[0] for row in rows]
 
+def load_responsible():
+    conn = sqlite3.connect("support.db")
+    c = conn.cursor()
+    try:
+        c.execute("SELECT username FROM responsible_users")
+        rows = c.fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    conn.close()
+    return [row[0] for row in rows]
+
+# ---------- РАБОТА С КЛЮЧЕВЫМИ СЛОВАМИ ----------
 def add_keyword(word):
     conn = sqlite3.connect("support.db")
     c = conn.cursor()
@@ -109,14 +124,6 @@ def remove_keyword(word):
     conn.close()
 
 # ---------- РАБОТА С ОТВЕТСТВЕННЫМИ ----------
-def load_responsible():
-    conn = sqlite3.connect("support.db")
-    c = conn.cursor()
-    c.execute("SELECT username FROM responsible_users")
-    rows = c.fetchall()
-    conn.close()
-    return [row[0] for row in rows]
-
 def add_responsible(username):
     conn = sqlite3.connect("support.db")
     c = conn.cursor()
@@ -135,8 +142,11 @@ def remove_responsible(username):
 def is_banned(user_id):
     conn = sqlite3.connect("support.db")
     c = conn.cursor()
-    c.execute("SELECT 1 FROM banned_users WHERE user_id=?", (user_id,))
-    row = c.fetchone()
+    try:
+        c.execute("SELECT 1 FROM banned_users WHERE user_id=?", (user_id,))
+        row = c.fetchone()
+    except sqlite3.OperationalError:
+        row = None
     conn.close()
     return row is not None
 
@@ -155,9 +165,9 @@ def unban_user(user_id):
     conn.commit()
     conn.close()
 
-# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
-KEYWORDS = load_keywords()
-RESPONSIBLE_LIST = load_responsible()
+# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ (будут загружены в main) ----------
+KEYWORDS = []
+RESPONSIBLE_LIST = []
 
 def check_keywords(text: str) -> bool:
     lower = text.lower()
@@ -186,13 +196,12 @@ async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      f"Ответственные: {mentions}"
             )
         else:
-            # Если список пуст, можно отправить в личку администратору или просто игнорировать
             await context.bot.send_message(
                 chat_id=GROUP_CHAT_ID,
                 text="⚠️ Нет назначенных ответственных. Сообщение не отправлено."
             )
 
-# ---------- ОСНОВНОЙ ОБРАБОТЧИК ----------
+# ---------- ОСНОВНЫЕ ОБРАБОТЧИКИ ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or not msg.text:
@@ -279,7 +288,7 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка /ask: {e}")
         await update.message.reply_text("❌ Извините, произошла ошибка.")
 
-# ---------- АДМИН-КОМАНДЫ: КЛЮЧЕВЫЕ СЛОВА ----------
+# ---------- АДМИН-КОМАНДЫ ----------
 async def add_keyword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         await update.message.reply_text("⛔ Нет прав.")
@@ -320,7 +329,6 @@ async def list_keywords_command(update: Update, context: ContextTypes.DEFAULT_TY
     response = "📋 Ключевые слова:\n" + "\n".join([f"• {kw}" for kw in kw_list])
     await update.message.reply_text(response)
 
-# ---------- АДМИН-КОМАНДЫ: ОТВЕТСТВЕННЫЕ ----------
 async def add_responsible_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         await update.message.reply_text("⛔ Нет прав.")
@@ -333,7 +341,6 @@ async def add_responsible_command(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("Некорректный юзернейм.")
         return
     add_responsible(username)
-    # Обновляем глобальный список
     global RESPONSIBLE_LIST
     RESPONSIBLE_LIST = load_responsible()
     await update.message.reply_text(f"✅ @{username} добавлен в список ответственных.")
@@ -362,7 +369,6 @@ async def list_responsible_command(update: Update, context: ContextTypes.DEFAULT
     response = "📋 Список ответственных:\n" + "\n".join([f"@{u}" for u in resp_list])
     await update.message.reply_text(response)
 
-# ---------- АДМИН-КОМАНДЫ: БАНЫ ----------
 async def ban_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         await update.message.reply_text("⛔ Нет прав.")
@@ -419,12 +425,16 @@ async def morning_greeting(context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- ЗАПУСК ----------
 def main():
+    # 1. Инициализируем БД (создаём таблицы)
     init_db()
+
+    # 2. Загружаем данные из БД
     global KEYWORDS, RESPONSIBLE_LIST
     KEYWORDS = load_keywords()
     RESPONSIBLE_LIST = load_responsible()
     logger.info(f"Загружено {len(KEYWORDS)} ключевых слов и {len(RESPONSIBLE_LIST)} ответственных")
 
+    # 3. Создаём приложение
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -456,7 +466,7 @@ def main():
         except Exception as e:
             logger.error(f"Ошибка планирования: {e}")
 
-    logger.info("Поддержка-бот (с админ-командами для ответственных) запущен!")
+    logger.info("Поддержка-бот (с админ-командами) запущен!")
     app.run_polling()
 
 if __name__ == "__main__":

@@ -74,7 +74,6 @@ async def analyze_with_ai(text: str):
         return {"is_problem": False, "advice": "Ошибка анализа"}
 
 async def answer_with_ai(question: str) -> str:
-    """Прямой ответ на вопрос через ИИ (для команды /ask)"""
     if ai_client is None:
         return "❌ ИИ недоступен. Проверьте переменную DEEPSEEK_API_KEY."
     try:

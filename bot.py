@@ -16,7 +16,7 @@ if not TOKEN:
     TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"
 
 GROUP_CHAT_ID = -4462437609
-DEFAULT_RESPONSIBLE = ["tunduk_dev", "tunduk_analyst"]
+DEFAULT_RESPONSIBLE = ["Bermet_Kadyrbekova", "tunduk_analyst"]
 ADMIN_IDS = [549890508]  # ваш Telegram ID
 BOT_USERNAME = "Jardam4y_bot"  # username вашего бота (без @)
 RESPONSIBLE_USER = "@Bermet_Kadyrbekova"  # кому отправлять уведомления

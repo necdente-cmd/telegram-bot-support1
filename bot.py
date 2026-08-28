@@ -2,6 +2,7 @@ import os
 import logging
 import sqlite3
 import json
+import re
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
@@ -192,7 +193,7 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("🤔 Думаю над вашим вопросом...")
     answer = await answer_with_ai(question)
-    # Очистка Markdown (простая)
+    # Очистка Markdown
     cleaned = re.sub(r'\*\*(.*?)\*\*', r'\1', answer)
     cleaned = re.sub(r'\*(.*?)\*', r'\1', cleaned)
     cleaned = re.sub(r'_(.*?)_', r'\1', cleaned)
@@ -210,7 +211,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("ask", ask_command))  # добавлена команда /ask
+    app.add_handler(CommandHandler("ask", ask_command))
 
     logger.info("Второй бот (поддержка) с /ask запущен!")
     app.run_polling()

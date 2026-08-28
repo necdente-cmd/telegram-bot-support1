@@ -1,0 +1,8 @@
+python-telegram-bot[job-queue]>=20.8
+google-generativeai
+google-genai
+openai
+matplotlib
+numpy
+reportlab
+openpyxl

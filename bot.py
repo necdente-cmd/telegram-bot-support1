@@ -16,7 +16,7 @@ if not TOKEN:
     TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"
 
 GROUP_CHAT_ID = -4462437609
-DEFAULT_RESPONSIBLE = ["Bermet_Kadyrbekova", "tunduk_analyst"]
+DEFAULT_RESPONSIBLE = ["Bermet_Kadyrbekova"", "tunduk_analyst"]
 ADMIN_IDS = [549890508]  # ваш Telegram ID
 BOT_USERNAME = "Jardam4y_bot"  # username вашего бота (без @)
 RESPONSIBLE_USER = "@Bermet_Kadyrbekova"  # кому отправлять уведомления
@@ -147,23 +147,35 @@ def init_db():
     conn.close()
     logger.info("База данных инициализирована")
 
-# ---------- ЗАГРУЗКА КЛЮЧЕВЫХ СЛОВ ----------
+# ---------- ФУНКЦИИ РАБОТЫ С КЛЮЧЕВЫМИ СЛОВАМИ ----------
 def load_keywords():
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    c.execute("SELECT word FROM keywords")
-    rows = c.fetchall()
+    try:
+        c.execute("SELECT word FROM keywords")
+        rows = c.fetchall()
+    except sqlite3.OperationalError:
+        # Если таблицы нет, возвращаем пустой список
+        rows = []
     conn.close()
     return [row[0] for row in rows]
 
-KEYWORDS = load_keywords()
+def add_keyword(word):
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO keywords (word) VALUES (?)", (word,))
+    conn.commit()
+    conn.close()
 
-def check_keywords(text: str) -> bool:
-    lower = text.lower()
-    for kw in KEYWORDS:
-        if kw in lower:
-            return True
-    return False
+def remove_keyword(word):
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("DELETE FROM keywords WHERE word=?", (word,))
+    conn.commit()
+    conn.close()
+
+def list_keywords():
+    return load_keywords()
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 def get_responsible_list():
@@ -187,27 +199,6 @@ def remove_responsible(username):
     c.execute("DELETE FROM responsible_users WHERE username=?", (username,))
     conn.commit()
     conn.close()
-
-def add_keyword(word):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO keywords (word) VALUES (?)", (word,))
-    conn.commit()
-    conn.close()
-    global KEYWORDS
-    KEYWORDS = load_keywords()
-
-def remove_keyword(word):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("DELETE FROM keywords WHERE word=?", (word,))
-    conn.commit()
-    conn.close()
-    global KEYWORDS
-    KEYWORDS = load_keywords()
-
-def list_keywords():
-    return load_keywords()
 
 def get_issue_by_id(issue_id):
     conn = sqlite3.connect("issues.db")
@@ -994,11 +985,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Проверка ключевых слов
+    # Проверка ключевых слов (используем глобальный список KEYWORDS, который загружен в main)
     if check_keywords(text):
         logger.info("Распознано по ключевым словам")
         issue_type = "bug"
-        # Берём случайный совет
         advice = get_random_advice()
         title = await generate_title(text)
         tags_list = extract_tags(text)
@@ -1108,13 +1098,25 @@ def is_greeting_or_question(text):
             return True
     return False
 
+def check_keywords(text: str) -> bool:
+    lower = text.lower()
+    # Используем глобальный список KEYWORDS
+    for kw in KEYWORDS:
+        if kw in lower:
+            return True
+    return False
+
 # ---------- ЗАПУСК ----------
 def main():
+    # 1. Инициализируем базу данных (создаём таблицы)
     init_db()
+
+    # 2. Загружаем ключевые слова из БД
     global KEYWORDS
     KEYWORDS = load_keywords()
     logger.info(f"Загружено {len(KEYWORDS)} ключевых слов")
 
+    # 3. Создаём приложение
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

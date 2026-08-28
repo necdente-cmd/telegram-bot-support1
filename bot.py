@@ -9,15 +9,13 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes, Com
 from openai import OpenAI
 
 # ---------- НАСТРОЙКИ ----------
-# Токен берётся из переменной окружения BOT_TOKEN (в отдельном проекте)
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("BOT_TOKEN не задан в переменных окружения")
 
-GROUP_CHAT_ID = -4462437609               # ID вашей группы
-RESPONSIBLE_USER = "@analyst"              # ← замените на реального ответственного
+GROUP_CHAT_ID = -4462437609
+RESPONSIBLE_USER = "@analyst"  # ← замените на реального ответственного
 
-# ИИ использует DEEPSEEK_API_KEY (должен быть в переменных)
 AI_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 ai_client = None
 if AI_API_KEY:
@@ -167,13 +165,7 @@ def main():
     app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
     app.add_handler(CommandHandler("help", help_command))
 
-    # Удаляем вебхук, чтобы избежать конфликтов
-    async def delete_webhook():
-        await app.bot.delete_webhook()
-        logger.info("Webhook удалён")
-
-    # Новый способ запуска асинхронной функции (без DeprecationWarning)
-    asyncio.run(delete_webhook())
+    # Удаление вебхука убрано – оно не требуется для polling
 
     logger.info("Второй бот (поддержка) запущен!")
     app.run_polling()

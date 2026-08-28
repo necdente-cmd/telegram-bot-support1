@@ -31,6 +31,18 @@ ADVICE_LIST = [
     "💾 Попробуйте перезагрузить устройство (компьютер/телефон)."
 ]
 
+# ---------- ФРАЗЫ ДЛЯ ПРЯМОЙ ПОМОЩИ ----------
+HELP_PHRASES = [
+    "жардам керек",
+    "жардам берличе",
+    "нужна помощь",
+    "требуется помощь",
+    "помогите",
+    "помоги",
+    "help",
+    "жардам"
+]
+
 def get_random_advice():
     return random.choice(ADVICE_LIST)
 
@@ -77,7 +89,7 @@ def init_db():
     ]
     for kw in initial_keywords:
         c.execute("INSERT OR IGNORE INTO keywords (word) VALUES (?)", (kw,))
-    # Начальные ответственные (можно оставить пустым или добавить)
+    # Начальные ответственные
     default_responsible = ["analyst"]  # без @
     for user in default_responsible:
         c.execute("INSERT OR IGNORE INTO responsible_users (username) VALUES (?)", (user,))
@@ -85,7 +97,7 @@ def init_db():
     conn.close()
     logger.info("База данных инициализирована")
 
-# ---------- ФУНКЦИИ ЗАГРУЗКИ (с защитой от отсутствия таблиц) ----------
+# ---------- ФУНКЦИИ ЗАГРУЗКИ ----------
 def load_keywords():
     conn = sqlite3.connect("support.db")
     c = conn.cursor()
@@ -165,7 +177,7 @@ def unban_user(user_id):
     conn.commit()
     conn.close()
 
-# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ (будут загружены в main) ----------
+# ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
 KEYWORDS = []
 RESPONSIBLE_LIST = []
 
@@ -175,6 +187,21 @@ def check_keywords(text: str) -> bool:
         if kw in lower:
             return True
     return False
+
+# ---------- ФУНКЦИЯ ДЛЯ ОТПРАВКИ УВЕДОМЛЕНИЯ ОТВЕТСТВЕННЫМ ----------
+async def notify_responsibles(context, username, problem_text):
+    responsible_users = load_responsible()
+    if responsible_users:
+        mentions = " ".join([f"@{u}" for u in responsible_users])
+        await context.bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=f"⚠️ Пользователь @{username} запросил помощь.\nСообщение: {problem_text}\nОтветственные: {mentions}"
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text="⚠️ Нет назначенных ответственных. Сообщение не отправлено."
+        )
 
 # ---------- ОБРАБОТЧИК КНОПОК ----------
 async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -224,6 +251,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("👋 Я бот для поддержки. Опишите проблему, и я дам совет.")
         return
 
+    # ---------- ПРОВЕРКА НА ПРЯМОЙ ЗАПРОС ПОМОЩИ ----------
+    lower_text = text.lower()
+    if any(phrase in lower_text for phrase in HELP_PHRASES):
+        logger.info("Распознан запрос помощи")
+        # Отвечаем пользователю
+        await msg.reply_text(
+            "🆘 Я вас понял! Сейчас передам сообщение ответственному.\n"
+            "Пожалуйста, опишите проблему подробнее, если не сделали этого ранее."
+        )
+        # Отправляем уведомление ответственным
+        await notify_responsibles(context, msg.from_user.username or "без юзернейма", text)
+        return
+
+    # ---------- ПРОВЕРКА КЛЮЧЕВЫХ СЛОВ ----------
     if check_keywords(text):
         logger.info("Распознано по ключевым словам")
         advice = get_random_advice()
@@ -251,7 +292,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ask <вопрос> – задать вопрос ИИ (если настроен)\n"
         "/list_keywords – список ключевых слов\n"
         "/list_responsible – список ответственных\n\n"
-        "Если у вас проблема, просто опишите её — я дам совет."
+        "Если у вас проблема, просто опишите её — я дам совет.\n"
+        "Если нужна помощь, напишите «жардам керек», «нужна помощь» или аналогичное — я передам сообщение ответственному."
     )
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -425,16 +467,12 @@ async def morning_greeting(context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- ЗАПУСК ----------
 def main():
-    # 1. Инициализируем БД (создаём таблицы)
     init_db()
-
-    # 2. Загружаем данные из БД
     global KEYWORDS, RESPONSIBLE_LIST
     KEYWORDS = load_keywords()
     RESPONSIBLE_LIST = load_responsible()
     logger.info(f"Загружено {len(KEYWORDS)} ключевых слов и {len(RESPONSIBLE_LIST)} ответственных")
 
-    # 3. Создаём приложение
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -443,17 +481,14 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ask", ask_command))
     
-    # Админ-команды: ключевые слова
     app.add_handler(CommandHandler("add_keyword", add_keyword_command))
     app.add_handler(CommandHandler("remove_keyword", remove_keyword_command))
     app.add_handler(CommandHandler("list_keywords", list_keywords_command))
     
-    # Админ-команды: ответственные
     app.add_handler(CommandHandler("add_responsible", add_responsible_command))
     app.add_handler(CommandHandler("remove_responsible", remove_responsible_command))
     app.add_handler(CommandHandler("list_responsible", list_responsible_command))
     
-    # Админ-команды: баны
     app.add_handler(CommandHandler("ban_user", ban_user_command))
     app.add_handler(CommandHandler("unban_user", unban_user_command))
     app.add_handler(CommandHandler("list_banned", list_banned_command))
@@ -466,7 +501,7 @@ def main():
         except Exception as e:
             logger.error(f"Ошибка планирования: {e}")
 
-    logger.info("Поддержка-бот (с админ-командами) запущен!")
+    logger.info("Поддержка-бот (с админ-командами и обработкой запросов помощи) запущен!")
     app.run_polling()
 
 if __name__ == "__main__":

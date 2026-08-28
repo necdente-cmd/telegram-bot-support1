@@ -15,8 +15,9 @@ if not TOKEN:
     # Для теста можно вставить жёстко, но лучше использовать переменную
     TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"
 
-# Пока оставляем ID, но будем использовать только для отправки уведомлений
-GROUP_CHAT_ID = -4462437609  # ← УБЕДИТЕСЬ, ЧТО ЭТО ПРАВИЛЬНОЕ ОТРИЦАТЕЛЬНОЕ ЧИСЛО
+# ИСПРАВЛЕННЫЙ ID ГРУППЫ (из логов)
+GROUP_CHAT_ID = -1004462437609  # ← правильный ID
+
 DEFAULT_RESPONSIBLE = ["tunduk_dev", "tunduk_analyst"]
 ADMIN_IDS = [549890508]  # ваш Telegram ID
 BOT_USERNAME = "oz_support_bot"  # username вашего бота (без @)
@@ -543,7 +544,6 @@ async def create_issue_from_message(msg, issue_type, context, responsible=None):
             except Exception:
                 pass
 
-    # Кнопки для изменения приоритета
     priority_keyboard = [
         [
             InlineKeyboardButton("🔴 Критичный", callback_data=f"set_priority_{issue_id}_high"),
@@ -964,7 +964,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = msg.text
-    # Логируем ID чата, чтобы вы могли убедиться, что ID правильный
     logger.info(f"Получено сообщение: {text} от {msg.from_user.username} (chat_id: {msg.chat_id})")
 
     if is_banned(msg.from_user.id):
@@ -1017,7 +1016,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(priority, "")
         minutes = PRIORITY_REMINDER_MINUTES[priority]
         file_text = f"📎 Вложение: {file_url}" if file_url else ""
-        # Сохраняем текст для уведомления
         context.user_data['last_problem_text'] = text
         keyboard = [
             [
@@ -1103,7 +1101,7 @@ def is_greeting_or_question(text):
             return True
     return False
 
-# Глобальный список ключевых слов (будет загружен в main)
+# Глобальный список ключевых слов
 KEYWORDS = []
 
 def check_keywords(text: str) -> bool:
@@ -1115,31 +1113,24 @@ def check_keywords(text: str) -> bool:
 
 # ---------- ЗАПУСК ----------
 def main():
-    # 1. Инициализируем базу данных
     init_db()
-
-    # 2. Загружаем ключевые слова
     global KEYWORDS
     KEYWORDS = load_keywords()
     logger.info(f"Загружено {len(KEYWORDS)} ключевых слов")
 
-    # 3. Создаём приложение
     app = Application.builder().token(TOKEN).build()
 
-    # Обработчик сообщений (без фильтра по chat_id – чтобы ловить все сообщения)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(priority_callback, pattern=r"^(set_priority_\d+_(high|medium|low)|skip_priority_\d+)$"))
     app.add_handler(CallbackQueryHandler(confirm_callback, pattern="^(confirm_yes|confirm_no)$"))
     app.add_handler(CallbackQueryHandler(responsible_callback, pattern=r"^(resp_.+|resp_skip|resp_other)$"))
     app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
 
-    # Команды
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ask", ask_command))
     app.add_handler(CommandHandler("rating", rating_command))
     app.add_handler(CommandHandler("top", top_command))
 
-    # Админ-команды
     app.add_handler(CommandHandler("add_responsible", add_responsible_command))
     app.add_handler(CommandHandler("remove_responsible", remove_responsible_command))
     app.add_handler(CommandHandler("list_responsible", list_responsible_command))
@@ -1151,7 +1142,6 @@ def main():
     app.add_handler(CommandHandler("unban_user", unban_user_command))
     app.add_handler(CommandHandler("list_banned", list_banned_command))
 
-    # Утреннее приветствие
     if app.job_queue:
         try:
             morning_time = datetime.strptime(MORNING_TIME_UTC, "%H:%M").time()

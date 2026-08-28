@@ -1,0 +1,184 @@
+import os
+import logging
+import sqlite3
+import json
+import asyncio
+from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
+from openai import OpenAI
+
+# ---------- НАСТРОЙКИ ----------
+TOKEN = os.environ.get("BOT2_TOKEN")
+if not TOKEN:
+    # fallback, если переменная не задана (можно убрать потом)
+    TOKEN = "8859549657:AAHm0xCj_SV76rOtk7GbTd8sYWy-CqywpBc"
+    logging.warning("BOT2_TOKEN не задан, используется жёсткий токен")
+
+GROUP_CHAT_ID = -4462437609
+RESPONSIBLE_USER = "@analyst"  # ← замените на реального ответственного
+
+# ИИ использует DEEPSEEK_API_KEY
+AI_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
+ai_client = None
+if AI_API_KEY:
+    try:
+        ai_client = OpenAI(api_key=AI_API_KEY, base_url="https://api.deepseek.com")
+        logging.info("AI клиент инициализирован")
+    except Exception as e:
+        logging.error(f"Ошибка инициализации AI: {e}")
+else:
+    logging.warning("DEEPSEEK_API_KEY не задан, ИИ-функции отключены")
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# ---------- БАЗА ДАННЫХ ----------
+def init_db():
+    conn = sqlite3.connect("issues2.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS problems (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        text TEXT,
+        created_at TIMESTAMP,
+        resolved BOOLEAN DEFAULT 0,
+        notified BOOLEAN DEFAULT 0
+    )''')
+    conn.commit()
+    conn.close()
+    logger.info("База данных для второго бота инициализирована")
+
+# ---------- ФУНКЦИИ ИИ ----------
+async def analyze_with_ai(text: str):
+    if ai_client is None:
+        return {"is_problem": False, "advice": "ИИ недоступен"}
+    try:
+        response = ai_client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": """
+                Ты — ИИ-помощник для IT-поддержки.
+                Если сообщение содержит жалобу на работу системы, ошибку или проблему, 
+                предложи краткое практическое решение (1-2 предложения).
+                Если сообщение не является проблемой, ответь: "is_problem": false.
+                Верни JSON: {"is_problem": true/false, "advice": "текст совета"}.
+                """},
+                {"role": "user", "content": text}
+            ],
+            response_format={"type": "json_object"}
+        )
+        result = json.loads(response.choices[0].message.content)
+        return result
+    except Exception as e:
+        logger.error(f"AI ошибка: {e}")
+        return {"is_problem": False, "advice": "Ошибка анализа"}
+
+# ---------- ОБРАБОТЧИК КНОПОК ----------
+async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "advice_helped":
+        await query.edit_message_text("✅ Отлично! Рады, что помогли. Если будут ещё вопросы — обращайтесь.")
+        conn = sqlite3.connect("issues2.db")
+        c = conn.cursor()
+        c.execute("UPDATE problems SET resolved=1 WHERE id=(SELECT MAX(id) FROM problems WHERE user_id=?)", (query.from_user.id,))
+        conn.commit()
+        conn.close()
+
+    elif data == "advice_not_helped":
+        await query.edit_message_text("🔄 Ваш запрос принят. Сообщение отправлено аналитику системы.")
+        responsible = RESPONSIBLE_USER
+        if responsible.startswith('@'):
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text=f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} не смог решить проблему.\n"
+                     f"Сообщение: {context.user_data.get('last_problem_text', '')}\n"
+                     f"Ответственный: {responsible}"
+            )
+        else:
+            try:
+                await context.bot.send_message(
+                    chat_id=int(responsible),
+                    text=f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} сообщил о проблеме:\n{context.user_data.get('last_problem_text', '')}"
+                )
+            except:
+                pass
+        conn = sqlite3.connect("issues2.db")
+        c = conn.cursor()
+        c.execute("UPDATE problems SET notified=1 WHERE id=(SELECT MAX(id) FROM problems WHERE user_id=?)", (query.from_user.id,))
+        conn.commit()
+        conn.close()
+
+# ---------- ОСНОВНОЙ ОБРАБОТЧИК ----------
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg or not msg.text or msg.chat_id != GROUP_CHAT_ID:
+        return
+    text = msg.text
+
+    if text.startswith('/') or msg.reply_to_message:
+        return
+
+    analysis = await analyze_with_ai(text)
+    is_problem = analysis.get("is_problem", False)
+    advice = analysis.get("advice", "")
+
+    if not is_problem:
+        return
+
+    context.user_data['last_problem_text'] = text
+
+    conn = sqlite3.connect("issues2.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO problems (user_id, username, text, created_at) VALUES (?, ?, ?, ?)",
+              (msg.from_user.id, msg.from_user.username or "", text, datetime.now()))
+    conn.commit()
+    conn.close()
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Помогло", callback_data="advice_helped"),
+            InlineKeyboardButton("❌ Не помогло", callback_data="advice_not_helped")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await msg.reply_text(
+        f"🧠 Совет по решению:\n{advice}\n\n"
+        "Если совет помог, нажмите «Помогло». Если нет — мы отправим запрос аналитику.",
+        reply_markup=reply_markup
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 Бот для поддержки пользователей системы.\n\n"
+        "Просто опишите проблему — я дам совет. Если не поможет, я передам сообщение аналитику."
+    )
+
+# ---------- ЗАПУСК ----------
+def main():
+    init_db()
+    app = Application.builder().token(TOKEN).build()
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
+    app.add_handler(CommandHandler("help", help_command))
+
+    # ---------- ДОБАВЛЯЕМ СБРОС ВЕБХУКА ----------
+    async def delete_webhook():
+        await app.bot.delete_webhook()
+        logger.info("Webhook удалён")
+
+    # Синхронно выполняем удаление вебхука перед запуском polling
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(delete_webhook())
+
+    logger.info("Второй бот (поддержка) запущен!")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()

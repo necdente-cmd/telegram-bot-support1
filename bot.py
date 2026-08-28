@@ -9,16 +9,15 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes, Com
 from openai import OpenAI
 
 # ---------- НАСТРОЙКИ ----------
-TOKEN = os.environ.get("BOT2_TOKEN")
+# Токен берётся из переменной окружения BOT_TOKEN (в отдельном проекте)
+TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
-    # fallback, если переменная не задана (можно убрать потом)
-    TOKEN = "8859549657:AAHm0xCj_SV76rOtk7GbTd8sYWy-CqywpBc"
-    logging.warning("BOT2_TOKEN не задан, используется жёсткий токен")
+    raise ValueError("BOT_TOKEN не задан в переменных окружения")
 
-GROUP_CHAT_ID = -4462437609
-RESPONSIBLE_USER = "@analyst"  # ← замените на реального ответственного
+GROUP_CHAT_ID = -4462437609               # ID вашей группы
+RESPONSIBLE_USER = "@analyst"              # ← замените на реального ответственного
 
-# ИИ использует DEEPSEEK_API_KEY
+# ИИ использует DEEPSEEK_API_KEY (должен быть в переменных)
 AI_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 ai_client = None
 if AI_API_KEY:
@@ -168,14 +167,13 @@ def main():
     app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
     app.add_handler(CommandHandler("help", help_command))
 
-    # ---------- ДОБАВЛЯЕМ СБРОС ВЕБХУКА ----------
+    # Удаляем вебхук, чтобы избежать конфликтов
     async def delete_webhook():
         await app.bot.delete_webhook()
         logger.info("Webhook удалён")
 
-    # Синхронно выполняем удаление вебхука перед запуском polling
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(delete_webhook())
+    # Новый способ запуска асинхронной функции (без DeprecationWarning)
+    asyncio.run(delete_webhook())
 
     logger.info("Второй бот (поддержка) запущен!")
     app.run_polling()

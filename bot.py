@@ -9,7 +9,7 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes, Com
 from openai import OpenAI
 
 # ---------- НАСТРОЙКИ ----------
-TOKEN = "8603802519:AAE_wOUFZcrjE5aw1D13FuztM8fAWO-uEYE"
+TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"
 if not TOKEN:
     raise ValueError("TOKEN не задан")
 

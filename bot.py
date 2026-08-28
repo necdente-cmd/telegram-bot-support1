@@ -13,7 +13,7 @@ if not TOKEN:
     raise ValueError("TOKEN не задан")
 
 GROUP_CHAT_ID = -4462437609
-RESPONSIBLE_USER = "@analyst"  # ← замените на реального ответственного (с @)
+RESPONSIBLE_USER = "@analyst"  # ← замените на реального ответственного
 
 # DeepSeek API
 AI_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
@@ -72,6 +72,23 @@ async def analyze_with_ai(text: str):
         logger.error(f"AI ошибка: {e}")
         return {"is_problem": False, "advice": "Ошибка анализа"}
 
+async def answer_with_ai(question: str) -> str:
+    """Прямой ответ на вопрос через ИИ (для команды /ask)"""
+    if ai_client is None:
+        return "❌ ИИ недоступен. Проверьте переменную DEEPSEEK_API_KEY."
+    try:
+        response = ai_client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "Ты — полезный и информативный ассистент."},
+                {"role": "user", "content": question}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"AI ответ ошибка: {e}")
+        return "❌ Извините, произошла ошибка при обработке вопроса."
+
 # ---------- ОБРАБОТЧИК КНОПОК ----------
 async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -117,11 +134,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = msg.text
 
-    # Если это ответ на другое сообщение – игнорируем
     if msg.reply_to_message:
         return
 
-    # Если это команда (начинается с /), пропускаем – она обрабатывается отдельно
     if text.startswith('/'):
         return
 
@@ -161,8 +176,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 Бот для поддержки пользователей системы.\n\n"
+        "Команды:\n"
+        "/help – показать это сообщение\n"
+        "/ask <вопрос> – задать вопрос ИИ\n\n"
         "Просто опишите проблему — я дам совет. Если не поможет, я передам сообщение аналитику."
     )
+
+async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("❓ Напишите вопрос после команды: /ask ваш вопрос")
+        return
+    question = " ".join(context.args)
+    if len(question) > 500:
+        await update.message.reply_text("⚠️ Вопрос слишком длинный (макс. 500 символов).")
+        return
+    await update.message.reply_text("🤔 Думаю над вашим вопросом...")
+    answer = await answer_with_ai(question)
+    # Очистка Markdown (простая)
+    cleaned = re.sub(r'\*\*(.*?)\*\*', r'\1', answer)
+    cleaned = re.sub(r'\*(.*?)\*', r'\1', cleaned)
+    cleaned = re.sub(r'_(.*?)_', r'\1', cleaned)
+    cleaned = re.sub(r'#{1,6}\s?', '', cleaned)
+    cleaned = re.sub(r'`(.*?)`', r'\1', cleaned)
+    cleaned = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', cleaned)
+    cleaned = cleaned.replace('*', '')
+    await update.message.reply_text(cleaned)
 
 # ---------- ЗАПУСК ----------
 def main():
@@ -172,8 +210,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("ask", ask_command))  # добавлена команда /ask
 
-    logger.info("Второй бот (поддержка) запущен!")
+    logger.info("Второй бот (поддержка) с /ask запущен!")
     app.run_polling()
 
 if __name__ == "__main__":

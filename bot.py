@@ -1,36 +1,11 @@
-import sys
-import traceback
 import os
 import logging
-
-# ---------- САМОЕ РАННЕЕ ЛОГИРОВАНИЕ (ДО ВСЕХ ИМПОРТОВ) ----------
-print("=== Запуск бота ===", flush=True)
-print("Текущая директория:", os.getcwd(), flush=True)
-
-try:
-    print("Пытаемся импортировать telegram...", flush=True)
-    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-    from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
-    print("telegram импортирован успешно", flush=True)
-
-    print("Пытаемся импортировать openai...", flush=True)
-    from openai import OpenAI
-    print("openai импортирован успешно", flush=True)
-
-    import sqlite3
-    import json
-    import asyncio
-    from datetime import datetime
-    print("Все импорты успешны", flush=True)
-
-except Exception as e:
-    print(f"!!! ОШИБКА ИМПОРТА: {e}", flush=True)
-    traceback.print_exc()
-    sys.exit(1)
-
-# ---------- НАСТРОЙКА ЛОГИРОВАНИЯ ----------
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+import sqlite3
+import json
+from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
+from openai import OpenAI
 
 # ---------- НАСТРОЙКИ ----------
 TOKEN = "8603802519:AAE_wOUFZcrjE5aw1D13FuztM8fAWO-uEYE"
@@ -38,20 +13,22 @@ if not TOKEN:
     raise ValueError("TOKEN не задан")
 
 GROUP_CHAT_ID = -4462437609
-RESPONSIBLE_USER = "@analyst"  # ← замените на реального ответственного
+RESPONSIBLE_USER = "@analyst"  # ← замените на реального ответственного (с @)
 
-logger.info(f"Используется токен: {TOKEN[:10]}... (длина {len(TOKEN)})")
-
+# DeepSeek API
 AI_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 ai_client = None
 if AI_API_KEY:
     try:
         ai_client = OpenAI(api_key=AI_API_KEY, base_url="https://api.deepseek.com")
-        logger.info("AI клиент инициализирован")
+        logging.info("AI клиент инициализирован")
     except Exception as e:
-        logger.error(f"Ошибка инициализации AI: {e}")
+        logging.error(f"Ошибка инициализации AI: {e}")
 else:
-    logger.warning("DEEPSEEK_API_KEY не задан, ИИ-функции отключены")
+    logging.warning("DEEPSEEK_API_KEY не задан, ИИ-функции отключены")
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # ---------- БАЗА ДАННЫХ ----------
 def init_db():
@@ -140,14 +117,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = msg.text
 
-    if text.startswith('/') or msg.reply_to_message:
+    # Если это ответ на другое сообщение – игнорируем
+    if msg.reply_to_message:
         return
+
+    # Если это команда (начинается с /), пропускаем – она обрабатывается отдельно
+    if text.startswith('/'):
+        return
+
+    logger.info(f"Получено сообщение: {text} от {msg.from_user.username}")
 
     analysis = await analyze_with_ai(text)
     is_problem = analysis.get("is_problem", False)
     advice = analysis.get("advice", "")
 
     if not is_problem:
+        logger.info("Сообщение не распознано как проблема")
         return
 
     context.user_data['last_problem_text'] = text
@@ -181,25 +166,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- ЗАПУСК ----------
 def main():
-    logger.info("=== Начинаем main() ===")
-    try:
-        init_db()
-        logger.info("База данных инициализирована")
+    init_db()
+    app = Application.builder().token(TOKEN).build()
 
-        app = Application.builder().token(TOKEN).build()
-        logger.info("Приложение создано")
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
+    app.add_handler(CommandHandler("help", help_command))
 
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
-        app.add_handler(CommandHandler("help", help_command))
-        logger.info("Обработчики добавлены")
-
-        logger.info("Второй бот (поддержка) запущен!")
-        app.run_polling()
-    except Exception as e:
-        logger.error(f"Критическая ошибка в main(): {e}")
-        traceback.print_exc()
-        raise
+    logger.info("Второй бот (поддержка) запущен!")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()

@@ -2,36 +2,26 @@ import os
 import logging
 import re
 import sqlite3
-import random
-import csv
-import io
 import json
-import asyncio
+import random
 from datetime import datetime, timedelta
-from collections import Counter
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
 from openai import OpenAI
-import matplotlib.pyplot as plt
-import numpy as np
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.utils import get_column_letter
-import io as io_bytes
 
-# ---------- НАСТРОЙКИ (ЗАМЕНИТЕ ТОЛЬКО ЭТИ ПЕРЕМЕННЫЕ) ----------
+# ---------- НАСТРОЙКИ ----------
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     # Для теста можно вставить жёстко, но лучше использовать переменную
-    TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"  # ← ваш новый токен
+    TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"  # ← ваш токен
 
-GROUP_CHAT_ID = -4462437609               # ← ID группы второго бота
-DEFAULT_RESPONSIBLE = ["tunduk_dev", "tunduk_analyst"]  # ← список ответственных
-ADMIN_IDS = [549890508]                   # ← ваш Telegram ID
-BOT_USERNAME = "Jardam4y"          # ← username второго бота (без @)
-RESPONSIBLE_USER = "@analyst"             # ← кому отправлять уведомление (с @)
+# ID группы (используется для проверки, но пока отключена)
+GROUP_CHAT_ID = -4462437609
+
+DEFAULT_RESPONSIBLE = ["tunduk_dev", "tunduk_analyst"]
+ADMIN_IDS = [549890508]  # ваш ID
+BOT_USERNAME = "oz_support_bot"  # username вашего бота (без @)
+RESPONSIBLE_USER = "@analyst"  # кому отправлять уведомления
 
 MORNING_TIME_UTC = "03:00"
 TIMEZONE_OFFSET = 6
@@ -42,7 +32,7 @@ PRIORITY_REMINDER_MINUTES = {
     "low": 30
 }
 
-# ---------- КЛЮЧЕВЫЕ СЛОВА (для быстрого ответа без ИИ) ----------
+# ---------- КЛЮЧЕВЫЕ СЛОВА ----------
 KEYWORDS = [
     "система не работает",
     "sanarip не работает",
@@ -77,19 +67,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ---------- НАСТРОЙКА ИИ ----------
-AI_API_KEY = os.environ.get("AI_BOT")
+AI_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 ai_client = None
 if AI_API_KEY:
     try:
-        ai_client = OpenAI(
-            api_key=AI_API_KEY,
-            base_url="https://api.deepseek.com"
-        )
+        ai_client = OpenAI(api_key=AI_API_KEY, base_url="https://api.deepseek.com")
         logger.info("AI клиент инициализирован")
     except Exception as e:
         logger.error(f"Ошибка инициализации AI: {e}")
 else:
-    logger.warning("AI_BOT не задан, ИИ-функции отключены")
+    logger.warning("DEEPSEEK_API_KEY не задан, ИИ-функции отключены")
 
 # ---------- БАЗА ДАННЫХ ----------
 def init_db():
@@ -170,120 +157,6 @@ def init_db():
     logger.info("База данных инициализирована")
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
-def get_setting(key, default=None):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("SELECT value FROM settings WHERE key=?", (key,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else default
-
-def set_setting(key, value):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
-    conn.commit()
-    conn.close()
-
-def is_banned(user_id):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("SELECT 1 FROM banned_users WHERE user_id=?", (user_id,))
-    row = c.fetchone()
-    conn.close()
-    return row is not None
-
-def ban_user(user_id, reason=""):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO banned_users (user_id, reason, banned_at) VALUES (?, ?, ?)",
-              (user_id, reason, datetime.now()))
-    conn.commit()
-    conn.close()
-
-def unban_user(user_id):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("DELETE FROM banned_users WHERE user_id=?", (user_id,))
-    conn.commit()
-    conn.close()
-
-def add_audit_log(issue_id, user_id, action, old_val="", new_val=""):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("INSERT INTO audit_log (issue_id, user_id, action, old_value, new_value, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-              (issue_id, user_id, action, old_val, new_val, datetime.now()))
-    conn.commit()
-    conn.close()
-
-def add_vote(issue_id, user_id, vote):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO votes (issue_id, user_id, vote) VALUES (?, ?, ?)",
-              (issue_id, user_id, vote))
-    conn.commit()
-    conn.close()
-    c = conn.cursor()
-    c.execute("SELECT author_id FROM issues WHERE id=?", (issue_id,))
-    row = c.fetchone()
-    if row:
-        add_points(row[0], vote)
-
-def get_votes(issue_id):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("SELECT SUM(vote) FROM votes WHERE issue_id=?", (issue_id,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row and row[0] else 0
-
-def add_points(user_id, points):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("INSERT INTO rating (user_id, points, last_updated) VALUES (?, ?, ?) "
-              "ON CONFLICT(user_id) DO UPDATE SET points = points + ?, last_updated = ?",
-              (user_id, points, datetime.now(), points, datetime.now()))
-    conn.commit()
-    conn.close()
-
-def get_points(user_id):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("SELECT points FROM rating WHERE user_id=?", (user_id,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else 0
-
-def get_top_users(limit=10):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("SELECT user_id, points FROM rating ORDER BY points DESC LIMIT ?", (limit,))
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-def get_responsible_list():
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("SELECT username FROM responsible_users ORDER BY username")
-    rows = c.fetchall()
-    conn.close()
-    return [row[0] for row in rows]
-
-def add_responsible(username):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO responsible_users (username) VALUES (?)", (username,))
-    conn.commit()
-    conn.close()
-
-def remove_responsible(username):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("DELETE FROM responsible_users WHERE username=?", (username,))
-    conn.commit()
-    conn.close()
-
 def get_issue_by_id(issue_id):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
@@ -313,7 +186,6 @@ def add_issue(message, issue_type, tags, responsible, priority, file_id="", file
     issue_id = c.lastrowid
     conn.commit()
     conn.close()
-    add_audit_log(issue_id, message.from_user.id, "create", "", f"type={issue_type}, priority={priority}")
     logger.info(f"Задача #{issue_id} создана")
     return issue_id
 
@@ -328,58 +200,52 @@ def update_priority(issue_id, priority, user_id):
     if old and old[0] != priority:
         add_audit_log(issue_id, user_id, "change_priority", old[0], priority)
 
-def close_issue(issue_id, closer_id=None):
+def add_audit_log(issue_id, user_id, action, old_val="", new_val=""):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    c.execute("SELECT status FROM issues WHERE id=?", (issue_id,))
-    old = c.fetchone()
-    if old and old[0] == 'closed':
-        conn.close()
-        return
-    if closer_id:
-        c.execute("UPDATE issues SET status='closed', closed_by=?, closed_at=? WHERE id=?", (closer_id, datetime.now(), issue_id))
-    else:
-        c.execute("UPDATE issues SET status='closed', closed_at=? WHERE id=?", (datetime.now(), issue_id))
+    c.execute("INSERT INTO audit_log (issue_id, user_id, action, old_value, new_value, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              (issue_id, user_id, action, old_val, new_val, datetime.now()))
     conn.commit()
     conn.close()
-    add_audit_log(issue_id, closer_id or 0, "close", old[0] if old else "", "closed")
-    if closer_id:
-        add_points(closer_id, 2)
 
-def reopen_issue(issue_id, user_id):
+def add_points(user_id, points):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    c.execute("SELECT status FROM issues WHERE id=?", (issue_id,))
-    old = c.fetchone()
-    c.execute("UPDATE issues SET status='open', reminder_sent=0 WHERE id=?", (issue_id,))
+    c.execute("INSERT INTO rating (user_id, points, last_updated) VALUES (?, ?, ?) "
+              "ON CONFLICT(user_id) DO UPDATE SET points = points + ?, last_updated = ?",
+              (user_id, points, datetime.now(), points, datetime.now()))
     conn.commit()
     conn.close()
-    add_audit_log(issue_id, user_id, "reopen", old[0] if old else "", "open")
 
-def is_issue_resolved(issue_id):
+def get_points(user_id):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    c.execute("SELECT status FROM issues WHERE id=?", (issue_id,))
+    c.execute("SELECT points FROM rating WHERE user_id=?", (user_id,))
     row = c.fetchone()
     conn.close()
-    return row and row[0] == 'closed'
+    return row[0] if row else 0
 
-def mark_reminder_sent(issue_id):
+def get_responsible_list():
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    c.execute("UPDATE issues SET reminder_sent=1 WHERE id=?", (issue_id,))
+    c.execute("SELECT username FROM responsible_users ORDER BY username")
+    rows = c.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
+
+def add_responsible(username):
+    conn = sqlite3.connect("issues.db")
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO responsible_users (username) VALUES (?)", (username,))
     conn.commit()
     conn.close()
 
-def add_comment(issue_id, user_id, user_name, text):
+def remove_responsible(username):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    c.execute('''INSERT INTO comments (issue_id, user_id, user_name, text, created_at)
-                 VALUES (?, ?, ?, ?, ?)''',
-              (issue_id, user_id, user_name, text, datetime.now()))
+    c.execute("DELETE FROM responsible_users WHERE username=?", (username,))
     conn.commit()
     conn.close()
-    add_audit_log(issue_id, user_id, "comment", "", text)
 
 def extract_tags(text):
     return re.findall(r'#\w+', text)
@@ -396,260 +262,56 @@ def detect_priority(text):
     else:
         return 'low'
 
-def get_all_tags():
+def is_issue_resolved(issue_id):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    c.execute("SELECT DISTINCT tags FROM issues WHERE tags IS NOT NULL AND tags != ''")
-    rows = c.fetchall()
+    c.execute("SELECT status FROM issues WHERE id=?", (issue_id,))
+    row = c.fetchone()
     conn.close()
-    tags_set = set()
-    for row in rows:
-        if row[0]:
-            for tag in row[0].split(','):
-                if tag:
-                    tags_set.add(tag.strip())
-    return sorted(tags_set)
+    return row and row[0] == 'closed'
 
-def get_stats_by_tag(tag, days=None):
+def mark_reminder_sent(issue_id):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    query = "SELECT type, status FROM issues WHERE tags LIKE ?"
-    params = [f"%{tag}%"]
-    if days:
-        cutoff = datetime.now() - timedelta(days=days)
-        query += " AND created_at >= ?"
-        params.append(cutoff)
-    c.execute(query, params)
-    rows = c.fetchall()
+    c.execute("UPDATE issues SET reminder_sent=1 WHERE id=?", (issue_id,))
+    conn.commit()
     conn.close()
-    stats = {"bug": {"total": 0, "closed": 0}, "suggestion": {"total": 0, "closed": 0}}
-    for row in rows:
-        t = row[0]
-        status = row[1]
-        stats[t]["total"] += 1
-        if status == "closed":
-            stats[t]["closed"] += 1
-    return stats
 
-def get_user_stats(user_id, days=None):
+def close_issue(issue_id, closer_id=None):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    query = "SELECT type, status FROM issues WHERE author_id=?"
-    params = [user_id]
-    if days:
-        cutoff = datetime.now() - timedelta(days=days)
-        query += " AND created_at >= ?"
-        params.append(cutoff)
-    c.execute(query, params)
-    rows = c.fetchall()
+    c.execute("SELECT status FROM issues WHERE id=?", (issue_id,))
+    old = c.fetchone()
+    if old and old[0] == 'closed':
+        conn.close()
+        return
+    if closer_id:
+        c.execute("UPDATE issues SET status='closed', closed_by=?, closed_at=? WHERE id=?", (closer_id, datetime.now(), issue_id))
+    else:
+        c.execute("UPDATE issues SET status='closed', closed_at=? WHERE id=?", (datetime.now(), issue_id))
+    conn.commit()
     conn.close()
-    stats = {"bug": {"total": 0, "closed": 0}, "suggestion": {"total": 0, "closed": 0}}
-    for row in rows:
-        t = row[0]
-        status = row[1]
-        stats[t]["total"] += 1
-        if status == "closed":
-            stats[t]["closed"] += 1
-    return stats
+    if closer_id:
+        add_points(closer_id, 2)
 
-def get_user_stats_by_username(username, days=None):
+def reopen_issue(issue_id, user_id):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    query = "SELECT type, status FROM issues WHERE username=?"
-    params = [username]
-    if days:
-        cutoff = datetime.now() - timedelta(days=days)
-        query += " AND created_at >= ?"
-        params.append(cutoff)
-    c.execute(query, params)
-    rows = c.fetchall()
+    c.execute("UPDATE issues SET status='open', reminder_sent=0 WHERE id=?", (issue_id,))
+    conn.commit()
     conn.close()
-    stats = {"bug": {"total": 0, "closed": 0}, "suggestion": {"total": 0, "closed": 0}}
-    for row in rows:
-        t = row[0]
-        status = row[1]
-        stats[t]["total"] += 1
-        if status == "closed":
-            stats[t]["closed"] += 1
-    return stats
 
-def get_stats_responsible(username, days=None):
+def add_comment(issue_id, user_id, user_name, text):
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
-    query = "SELECT id, status, type FROM issues WHERE responsible LIKE ?"
-    params = [f"%{username}%"]
-    if days:
-        cutoff = datetime.now() - timedelta(days=days)
-        query += " AND created_at >= ?"
-        params.append(cutoff)
-    c.execute(query, params)
-    rows = c.fetchall()
+    c.execute('''INSERT INTO comments (issue_id, user_id, user_name, text, created_at)
+                 VALUES (?, ?, ?, ?, ?)''',
+              (issue_id, user_id, user_name, text, datetime.now()))
+    conn.commit()
     conn.close()
-    total = len(rows)
-    closed = sum(1 for r in rows if r[1] == 'closed')
-    bugs = sum(1 for r in rows if r[2] == 'bug')
-    suggestions = sum(1 for r in rows if r[2] == 'suggestion')
-    return total, closed, bugs, suggestions
+    add_audit_log(issue_id, user_id, "comment", "", text)
 
-def search_issues(text_query):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("SELECT id, author_name, text, type, status, tags, created_at FROM issues WHERE text LIKE ? ORDER BY created_at DESC LIMIT 20", (f"%{text_query}%",))
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-def generate_export(days=None):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    query = "SELECT id, author_name, username, text, type, status, priority, tags, responsible, created_at FROM issues"
-    params = []
-    if days:
-        cutoff = datetime.now() - timedelta(days=days)
-        query += " WHERE created_at >= ?"
-        params.append(cutoff)
-    c.execute(query, params)
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-def generate_weekly_report():
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    week_ago = datetime.now() - timedelta(days=7)
-    c.execute("SELECT COUNT(*) FROM issues WHERE created_at >= ?", (week_ago,))
-    total_created = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM issues WHERE status='closed' AND created_at >= ?", (week_ago,))
-    total_closed = c.fetchone()[0]
-    c.execute("SELECT type, COUNT(*) FROM issues WHERE created_at >= ? GROUP BY type", (week_ago,))
-    type_counts = c.fetchall()
-    c.execute("SELECT priority, COUNT(*) FROM issues WHERE created_at >= ? GROUP BY priority", (week_ago,))
-    priority_counts = c.fetchall()
-    conn.close()
-    return total_created, total_closed, type_counts, priority_counts
-
-def get_open_tasks_text(limit=10, priority=None, tag=None, days=None):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    query = "SELECT id, author_name, text, type, priority, tags, created_at FROM issues WHERE status='open'"
-    params = []
-    if priority:
-        query += " AND priority=?"
-        params.append(priority)
-    if tag:
-        query += " AND tags LIKE ?"
-        params.append(f"%{tag}%")
-    if days:
-        cutoff = datetime.now() - timedelta(days=days)
-        query += " AND created_at >= ?"
-        params.append(cutoff)
-    query += " ORDER BY created_at DESC LIMIT ?"
-    params.append(limit)
-    c.execute(query, params)
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-def is_greeting_or_question(text):
-    text_lower = text.lower()
-    patterns = [r'\bпривет\b', r'\bздравствуй[те]?\b', r'\bсалам\b', r'\bhello\b', r'\bhi\b',
-                r'кто ты', r'откуда', r'зачем', r'для чего', r'что ты умеешь', r'расскажи о себе']
-    for p in patterns:
-        if re.search(p, text_lower):
-            return True
-    return False
-
-def generate_excel_report(from_date=None, to_date=None):
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    query = """
-        SELECT id, title, text, author_name, responsible, created_at, closed_at, priority, tags
-        FROM issues
-        WHERE status='closed'
-    """
-    params = []
-    if from_date:
-        query += " AND closed_at >= ?"
-        params.append(from_date)
-    if to_date:
-        query += " AND closed_at <= ?"
-        params.append(to_date)
-    query += " ORDER BY responsible, closed_at"
-    c.execute(query, params)
-    rows = c.fetchall()
-    conn.close()
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Решённые задачи"
-    headers = ["ID", "Заголовок", "Текст", "Автор", "Ответственный", "Создано", "Закрыто", "Приоритет", "Теги"]
-    ws.append(headers)
-    for col in range(1, len(headers)+1):
-        cell = ws.cell(row=1, column=col)
-        cell.font = Font(bold=True)
-        cell.fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
-        cell.alignment = Alignment(horizontal="center")
-    for row in rows:
-        ws.append([
-            row[0], row[1] or "", row[2] or "", row[3] or "", row[4] or "",
-            row[5] if row[5] else "",
-            row[6] if row[6] else "",
-            row[7] or "", row[8] or ""
-        ])
-    for col in range(1, len(headers)+1):
-        col_letter = get_column_letter(col)
-        max_length = 0
-        for cell in ws[col_letter]:
-            try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
-            except:
-                pass
-        adjusted_width = min(max_length + 2, 40)
-        ws.column_dimensions[col_letter].width = adjusted_width
-
-    ws2 = wb.create_sheet("Сводка по ответственным")
-    ws2.append(["Ответственный", "Количество закрытых задач"])
-    counter = Counter()
-    for row in rows:
-        resp = row[4] if row[4] else "Не назначен"
-        counter[resp] += 1
-    for resp, count in counter.most_common():
-        ws2.append([resp, count])
-
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
-    return output
-
-# ---------- АНЕКДОТЫ ----------
-JOKES = [
-    "— Почему программисты путают Хэллоуин и Рождество? — Потому что 31 Oct = 25 Dec.",
-    "— Сколько программистов нужно, чтобы заменить лампочку? — Ни одного, это аппаратная проблема.",
-    "— Что говорит программист, когда теряет работу? — 'Я оказался в бесконечном цикле без выхода.'",
-    "— Чем отличается программист от электрика? — Электрик не пытается починить выключатель в розетке с помощью блока try...catch.",
-    "— Бета-тестер: 'Я нашёл баг!' Разработчик: 'Это не баг, это фича.'",
-    "— Почему у программистов всегда холодно? — Потому что они работают в среде с постоянным 'wind' (ветер).",
-    "— Что делает программист, когда приходит к врачу? — Проверяет версию прошивки.",
-    "— Как отличить хорошего программиста от плохого? — Хороший пишет код, который работает; плохой — код, который красиво написан.",
-    "— Почему программисты любят темный режим? — Потому что свет привлекает баги.",
-    "— Что такое идеальный код? — Тот, который работает без ошибок, но никто не знает, как он работает.",
-    "— Бермет тестирует новый релиз. Говорит: 'Всё работает'. Через минуту — 'Ой, а это что? Баг?'. Так она нашла 10 багов за 5 минут.",
-    "— Толгонай говорит разработчику: 'Ты исправил баг?'. Разработчик: 'Да'. Толгонай: 'А почему тогда у меня опять не работает?'. Разработчик: 'Это ты не тот кнопку нажала'. ",
-    "— Бекзат пишет код так быстро, что компилятор просит его остановиться и дать ему отдохнуть.",
-    "— Адил пришёл на работу за 2 часа до дедлайна. Коллеги: 'Ты успеешь?'. Адил: 'Я не успею, но я попрошу у босса ещё час'. И попросил. И получил.",
-    "— Нурзада говорит: 'Я напишу документацию'. Все засмеялись. Но она написала. И она была такой подробной, что даже баги начали сами собой исправляться.",
-    "— Айдай нарисовала макет. Разработчик: 'Это невозможно реализовать'. Айдай: 'Тогда я перерисую'. Через час — 'А так можно?'. И так 5 раз. В итоге сделали как в первом варианте.",
-    "— Улан: 'Я подниму сервер за минуту'. Все удивились. Через минуту сервер действительно работал. Правда, через две минуты он упал. Но Улан сказал: 'Это была нагрузочная проверка'.",
-    "— Калыс анализирует данные: 'У нас 95% багов происходит в пятницу вечером'. Коллеги: 'И что?'. Калыс: 'Значит, в пятницу вечером надо не работать, а отдыхать'.",
-    "— Жанара: 'Коллеги, давайте обсудим задачи'. Все молчат. Жанара: 'Тогда я напишу в чат'. И написала. И все ответили. Вот что значит коммуникация!",
-    "— Ыкыбал оптимизирует код: 'Я убрал 100 строк и теперь всё работает в 2 раза быстрее'. Коллеги: 'А как?'. Ыкыбал: 'Я просто удалил комментарии'."
-]
-
-def get_random_joke():
-    return random.choice(JOKES)
-
-# ---------- ФУНКЦИИ ИИ ----------
+# ---------- АНАЛИЗ ИИ ----------
 async def analyze_with_ai(text: str):
     if ai_client is None:
         return {"type": "other", "reason": "AI недоступен"}
@@ -806,13 +468,6 @@ async def create_issue_from_message(msg, issue_type, context, responsible=None):
         for _, sid, stext, sauthor in similar:
             similar_text += f"  #{sid} ({sauthor}): {stext}...\n"
 
-    vote_buttons = []
-    if issue_type == "suggestion":
-        vote_buttons = [
-            InlineKeyboardButton("👍", callback_data=f"vote_{issue_id}_1"),
-            InlineKeyboardButton("👎", callback_data=f"vote_{issue_id}_-1")
-        ]
-
     await msg.reply_text(
         f"🔔 Зарегистрирован {issue_type} #{issue_id}\n"
         f"Заголовок: {title}\n"
@@ -823,8 +478,7 @@ async def create_issue_from_message(msg, issue_type, context, responsible=None):
         f"Ответственные: {responsible_mentions}\n"
         f"⏳ Напоминание через {minutes} мин.\n"
         f"{file_text}\n"
-        f"{similar_text}",
-        reply_markup=InlineKeyboardMarkup([vote_buttons]) if vote_buttons else None
+        f"{similar_text}"
     )
 
     if priority == "high":
@@ -837,6 +491,7 @@ async def create_issue_from_message(msg, issue_type, context, responsible=None):
             except Exception:
                 pass
 
+    # Кнопки для изменения приоритета
     priority_keyboard = [
         [
             InlineKeyboardButton("🔴 Критичный", callback_data=f"set_priority_{issue_id}_high"),
@@ -860,7 +515,7 @@ async def create_issue_from_message(msg, issue_type, context, responsible=None):
     add_points(msg.from_user.id, 1)
     return issue_id
 
-# ---------- ОБРАБОТЧИКИ КНОПОК ----------
+# ---------- ОБРАБОТЧИК КНОПОК ПРИОРИТЕТА ----------
 async def priority_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -876,6 +531,7 @@ async def priority_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not issue:
         await query.edit_message_text("❌ Задача не найдена.")
         return
+    # Проверка прав (автор или админ)
     conn = sqlite3.connect("issues.db")
     c = conn.cursor()
     c.execute("SELECT author_id FROM issues WHERE id=?", (issue_id,))
@@ -901,6 +557,7 @@ async def priority_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == 'skip':
         await query.edit_message_text(f"⏩ Приоритет задачи #{issue_id} оставлен как авто.")
 
+# ---------- ОБРАБОТЧИК ПОДТВЕРЖДЕНИЯ ----------
 async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -987,8 +644,9 @@ async def handle_manual_responsible(update: Update, context: ContextTypes.DEFAUL
     if not context.user_data.get('awaiting_responsible'):
         return
     msg = update.message
-    if not msg or not msg.text or msg.chat_id != GROUP_CHAT_ID:
+    if not msg or not msg.text:
         return
+    # Для отладки не проверяем chat_id
     text = msg.text.strip()
     mentions = extract_mentions(text)
     if not mentions:
@@ -1005,66 +663,14 @@ async def handle_manual_responsible(update: Update, context: ContextTypes.DEFAUL
     del context.user_data['pending_for_responsible']
     del context.user_data['pending_issue']
 
-async def vote_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    parts = data.split('_')
-    if len(parts) < 3:
-        return
-    issue_id = int(parts[1])
-    vote = int(parts[2])
-    user_id = query.from_user.id
-    conn = sqlite3.connect("issues.db")
-    c = conn.cursor()
-    c.execute("SELECT 1 FROM votes WHERE issue_id=? AND user_id=?", (issue_id, user_id))
-    if c.fetchone():
-        await query.edit_message_text("❌ Вы уже голосовали.")
-        conn.close()
-        return
-    conn.close()
-    add_vote(issue_id, user_id, vote)
-    total = get_votes(issue_id)
-    await query.edit_message_text(f"✅ Голос учтён! Рейтинг: {total}")
-
-# ---------- ПРИВЕТСТВИЕ НОВЫХ ----------
-async def greet_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for member in update.message.new_chat_members:
-        if member.id == context.bot.id:
-            continue
-        await update.message.reply_text(
-            f"👋 Добро пожаловать, {member.full_name}!\n\n"
-            "Для справки используйте /help."
-        )
-
-# ---------- УТРЕННЕЕ ПРИВЕТСТВИЕ ----------
-async def morning_greeting(context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(
-        chat_id=GROUP_CHAT_ID,
-        text="🌞 Доброе утро, коллеги! Желаем продуктивного дня!"
-    )
-    tasks = get_open_tasks_text(limit=10)
-    if tasks:
-        response = "📋 Открытые задачи:\n"
-        for row in tasks:
-            issue_id, author, text, issue_type, priority, tags, created = row
-            emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(priority, "")
-            created_str = created[:16] if isinstance(created, str) else created.strftime("%Y-%m-%d %H:%M")
-            response += f"#{issue_id} {issue_type} {emoji} от {author} ({created_str}): {text[:50]}...\n"
-        await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=response)
-    else:
-        await context.bot.send_message(chat_id=GROUP_CHAT_ID, text="🎉 Нет открытых задач!")
-
-# ---------- ОСНОВНОЙ ОБРАБОТЧИК (с проверкой ключевых слов) ----------
+# ---------- ОСНОВНОЙ ОБРАБОТЧИК С КЛЮЧЕВЫМИ СЛОВАМИ ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg or not msg.text or msg.chat_id != GROUP_CHAT_ID:
+    if not msg or not msg.text:
         return
-    text = msg.text
 
-    if is_banned(msg.from_user.id):
-        await msg.reply_text("⛔ Вы забанены.")
-        return
+    text = msg.text
+    logger.info(f"Получено сообщение: {text} от {msg.from_user.username} (chat_id: {msg.chat_id})")
 
     if msg.reply_to_message:
         issue = get_issue_by_reply(msg.reply_to_message.message_id)
@@ -1076,6 +682,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.startswith('/'):
         return
 
+    # Проверяем, не является ли сообщение приветствием или вопросом к боту
     if f"@{BOT_USERNAME}" in text or is_greeting_or_question(text):
         await msg.reply_text(
             "👋 Привет! Я бот для регистрации багов и предложений.\n"
@@ -1083,16 +690,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ---------- ПРОВЕРКА КЛЮЧЕВЫХ СЛОВ (перед AI) ----------
+    # ---------- ПРОВЕРКА КЛЮЧЕВЫХ СЛОВ ----------
     if check_keywords(text):
-        # Сразу создаём задачу с типом "bug" и даём простой совет
         logger.info("Распознано по ключевым словам")
         issue_type = "bug"
-        # Генерируем заголовок и теги, но не отправляем в AI
-        # Используем упрощённый совет
         advice = "Попробуйте перезагрузить страницу или проверить соединение. Если не поможет, обратитесь к аналитику."
-        # Создаём задачу как обычно, без AI
-        title = await generate_title(text)  # можно без AI, но это быстро
+        # Создаём задачу без AI
+        title = await generate_title(text)
         tags_list = extract_tags(text)
         tags_str = ",".join(tags_list) if tags_list else ""
         mentions = extract_mentions(text)
@@ -1101,7 +705,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             responsible = DEFAULT_RESPONSIBLE
         responsible_str = ",".join(responsible)
-        priority = detect_priority(text)  # без AI
+        priority = detect_priority(text)
         file_id = ""
         file_url = ""
         if msg.document:
@@ -1116,7 +720,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(priority, "")
         minutes = PRIORITY_REMINDER_MINUTES[priority]
         file_text = f"📎 Вложение: {file_url}" if file_url else ""
-        # Отправляем сообщение с советом и кнопками
         keyboard = [
             [
                 InlineKeyboardButton("✅ Помогло", callback_data="advice_helped"),
@@ -1138,7 +741,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Если совет помог, нажмите «Помогло». Если нет — мы отправим запрос аналитику.",
             reply_markup=reply_markup
         )
-        # Планируем напоминание
         if context.job_queue:
             delay = minutes * 60
             job = context.job_queue.run_once(send_reminder, when=delay, data={"issue_id": issue_id, "chat_id": msg.chat_id})
@@ -1148,7 +750,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_points(msg.from_user.id, 1)
         return
 
-    # ---------- Обычная логика с AI ----------
+    # ---------- ЛОГИКА С AI ----------
     if ai_client is not None:
         analysis = await analyze_with_ai(text)
         issue_type = analysis.get("type") if analysis else None
@@ -1168,7 +770,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # Старая логика (если AI не сработал)
+    # ---------- СТАРАЯ ЛОГИКА (ключевые слова) ----------
     bug_pattern = r'\b(баг|ошибка|bug|не работает|глюк)\b'
     suggest_pattern = r'\b(предложени|улучшени|suggest|идея|хотелось бы)\b'
     issue_type = None
@@ -1193,7 +795,71 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ---------- НАПОМИНАНИЕ ----------
+# ---------- ОБРАБОТЧИК КНОПОК "Помогло/Не помогло" ----------
+async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "advice_helped":
+        await query.edit_message_text("✅ Отлично! Рады, что помогли. Если будут ещё вопросы — обращайтесь.")
+
+    elif data == "advice_not_helped":
+        await query.edit_message_text("🔄 Ваш запрос принят. Сообщение отправлено аналитику системы.")
+        responsible = RESPONSIBLE_USER
+        if responsible.startswith('@'):
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text=f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} не смог решить проблему.\n"
+                     f"Сообщение: {context.user_data.get('last_problem_text', '')}\n"
+                     f"Ответственный: {responsible}"
+            )
+        else:
+            try:
+                await context.bot.send_message(
+                    chat_id=int(responsible),
+                    text=f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} сообщил о проблеме:\n{context.user_data.get('last_problem_text', '')}"
+                )
+            except:
+                pass
+
+# ---------- КОМАНДЫ ----------
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 Бот для поддержки пользователей системы.\n\n"
+        "Команды:\n"
+        "/help – показать это сообщение\n"
+        "/ask <вопрос> – задать вопрос ИИ\n\n"
+        "Просто опишите проблему — я дам совет. Если не поможет, я передам сообщение аналитику."
+    )
+
+async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("❓ Напишите вопрос после команды: /ask ваш вопрос")
+        return
+    question = " ".join(context.args)
+    if len(question) > 500:
+        await update.message.reply_text("⚠️ Вопрос слишком длинный (макс. 500 символов).")
+        return
+    await update.message.reply_text("🤔 Думаю...")
+    answer = await answer_with_ai(question)
+    cleaned = re.sub(r'\*\*(.*?)\*\*', r'\1', answer)
+    cleaned = re.sub(r'\*(.*?)\*', r'\1', cleaned)
+    cleaned = re.sub(r'_(.*?)_', r'\1', cleaned)
+    cleaned = re.sub(r'#{1,6}\s?', '', cleaned)
+    cleaned = re.sub(r'`(.*?)`', r'\1', cleaned)
+    cleaned = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', cleaned)
+    cleaned = cleaned.replace('*', '')
+    await update.message.reply_text(cleaned)
+
+async def joke_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    jokes = [
+        "— Почему программисты путают Хэллоуин и Рождество? — Потому что 31 Oct = 25 Dec.",
+        "— Сколько программистов нужно, чтобы заменить лампочку? — Ни одного, это аппаратная проблема.",
+        "— Что говорит программист, когда теряет работу? — 'Я оказался в бесконечном цикле без выхода.'",
+    ]
+    await update.message.reply_text(f"😂 {random.choice(jokes)}")
+
 async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
     data = context.job.data
     issue_id = data["issue_id"]
@@ -1220,64 +886,28 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
         text=f"⚠️ Напоминание! Задача #{issue_id} без ответа.{mentions}\nПросьба ответить."
     )
 
-# ---------- КОМАНДЫ ----------
-# (Все команды полностью идентичны тем, что были в первом боте, кроме добавления обработчика для "advice" кнопок)
-# Для экономии места я не дублирую их все, так как они уже есть в коде выше.
-# В коде они присутствуют в полном объёме.
-
-# ---------- ДОПОЛНИТЕЛЬНЫЙ ОБРАБОТЧИК ДЛЯ КНОПОК "Помогло/Не помогло" ----------
-async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == "advice_helped":
-        await query.edit_message_text("✅ Отлично! Рады, что помогли. Если будут ещё вопросы — обращайтесь.")
-        # Можно отметить задачу как решённую (опционально)
-        # Здесь можно получить issue_id из контекста, но для простоты пока пропустим
-
-    elif data == "advice_not_helped":
-        await query.edit_message_text("🔄 Ваш запрос принят. Сообщение отправлено аналитику системы.")
-        # Отправляем уведомление ответственному
-        responsible = RESPONSIBLE_USER
-        if responsible.startswith('@'):
-            await context.bot.send_message(
-                chat_id=GROUP_CHAT_ID,
-                text=f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} не смог решить проблему.\n"
-                     f"Сообщение: {context.user_data.get('last_problem_text', '')}\n"
-                     f"Ответственный: {responsible}"
-            )
-        else:
-            try:
-                await context.bot.send_message(
-                    chat_id=int(responsible),
-                    text=f"⚠️ Пользователь @{query.from_user.username or 'без юзернейма'} сообщил о проблеме:\n{context.user_data.get('last_problem_text', '')}"
-                )
-            except:
-                pass
+def is_greeting_or_question(text):
+    text_lower = text.lower()
+    patterns = [r'\bпривет\b', r'\bздравствуй[те]?\b', r'\bсалам\b', r'\bhello\b', r'\bhi\b',
+                r'кто ты', r'откуда', r'зачем', r'для чего', r'что ты умеешь', r'расскажи о себе']
+    for p in patterns:
+        if re.search(p, text_lower):
+            return True
+    return False
 
 # ---------- ЗАПУСК ----------
 def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
-    if app.job_queue is None:
-        logger.warning("JobQueue не инициализирован")
-    if app.bot_data.get('reminder_jobs') is None:
-        app.bot_data['reminder_jobs'] = {}
 
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, greet_new_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(priority_callback, pattern=r"^(set_priority_\d+_(high|medium|low)|skip_priority_\d+)$"))
     app.add_handler(CallbackQueryHandler(confirm_callback, pattern="^(confirm_yes|confirm_no)$"))
     app.add_handler(CallbackQueryHandler(responsible_callback, pattern=r"^(resp_.+|resp_skip|resp_other)$"))
-    app.add_handler(CallbackQueryHandler(vote_callback, pattern=r"^vote_\d+_[-\d]+$"))
-    app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))  # новый обработчик
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manual_responsible))
-
-    # Все команды (bug, suggest, ask, mystats, stats, tags, tagstats, open, joke, close, reopen, comment, find, stats_responsible, export, report, report_pdf, report_excel, help, rating, top, dashboard, add_responsible, remove_responsible, list_responsible, set_auto_close, ban_user, unban_user)
-
-    # ... (все команды добавляются, как в первом боте)
-    # Для краткости я не буду переписывать их все здесь, но в финальном коде они есть.
+    app.add_handler(CallbackQueryHandler(advice_callback, pattern="^(advice_helped|advice_not_helped)$"))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("ask", ask_command))
+    app.add_handler(CommandHandler("joke", joke_command))
 
     logger.info("Второй бот (поддержка) с ключевыми словами запущен!")
     app.run_polling()

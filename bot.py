@@ -11,13 +11,13 @@ from openai import OpenAI
 # ---------- НАСТРОЙКИ ----------
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
-    TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"  # замените на актуальный
+    TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"
 
-GROUP_CHAT_ID = -1004462437609          # ID вашей группы
-ADMIN_IDS = [549890508]                 # ваш Telegram ID
-BOT_USERNAME = "oz_support_bot"         # username бота (без @)
+GROUP_CHAT_ID = -1004462437609
+ADMIN_IDS = [549890508]
+BOT_USERNAME = "oz_support_bot"
 
-MORNING_TIME_UTC = "03:00"              # 09:00 по Бишкеку
+MORNING_TIME_UTC = "03:00"  # 09:00 по Бишкеку
 
 # ---------- СОВЕТЫ ----------
 ADVICE_LIST = [
@@ -31,7 +31,7 @@ ADVICE_LIST = [
     "💾 Попробуйте перезагрузить устройство (компьютер/телефон)."
 ]
 
-# ---------- ФРАЗЫ ДЛЯ ПРЯМОЙ ПОМОЩИ ----------
+# ---------- ФРАЗЫ ДЛЯ ПРЯМОЙ ПОМОЩИ (расширенные) ----------
 HELP_PHRASES = [
     "жардам керек",
     "жардам берличе",
@@ -40,7 +40,21 @@ HELP_PHRASES = [
     "помогите",
     "помоги",
     "help",
-    "жардам"
+    "жардам",
+    "жардамга",
+    "жардам бергилечи",
+    "сос",
+    "помощь керек",
+    "нужно помощь",
+    "помощь"          # теперь слово "помощь" само по себе вызывает ответственного
+]
+
+# ---------- ФРАЗЫ ДЛЯ ТЕХНИЧЕСКИХ РАБОТ ----------
+TECHNICAL_WORKS_PHRASES = [
+    "техническая работа",
+    "технические работы",
+    "технические неполадки",
+    "технические проблемы"
 ]
 
 def get_random_advice():
@@ -78,18 +92,22 @@ def init_db():
         reason TEXT,
         banned_at TIMESTAMP
     )''')
-    # Начальные ключевые слова
+    # Начальные ключевые слова (расширенные)
     initial_keywords = [
         "система не работает", "sanarip не работает", "санарип не работет",
         "база зависает", "база катып жатат", "база жай иштеп жатат",
         "база иштебей калды", "система медленно работает", "не работает",
         "ошибка", "баг", "глюк", "завис", "не открывается", "не грузит",
         "проблема", "система тутап калды", "система жай иштейт",
-        "санприп иштебей калды", "санприп жай иштейт"
+        "санприп иштебей калды", "санприп жай иштейт",
+        "сайт не работает",          # новое
+        "мис не работает",           # новое
+        "а что с мис",               # новое
+        "а что с мисс"               # новое
     ]
     for kw in initial_keywords:
         c.execute("INSERT OR IGNORE INTO keywords (word) VALUES (?)", (kw,))
-    # Начальные ответственные (можно изменить или оставить пустым)
+    # Начальные ответственные
     default_responsible = ["analyst"]
     for user in default_responsible:
         c.execute("INSERT OR IGNORE INTO responsible_users (username) VALUES (?)", (user,))
@@ -188,7 +206,14 @@ def check_keywords(text: str) -> bool:
             return True
     return False
 
-# ---------- ОТВЕТ НА ВОПРОСЫ О БОТЕ (БЕЗ MARKDOWN) ----------
+def check_technical_works(text: str) -> bool:
+    lower = text.lower()
+    for phrase in TECHNICAL_WORKS_PHRASES:
+        if phrase in lower:
+            return True
+    return False
+
+# ---------- ОТВЕТ НА ВОПРОСЫ О БОТЕ ----------
 async def reply_bot_info(update: Update):
     info_text = (
         "🤖 Мои возможности:\n\n"
@@ -211,7 +236,7 @@ async def reply_bot_info(update: Update):
         "/list_banned – список забаненных\n\n"
         "Если у вас есть проблема, просто опишите её — я помогу!"
     )
-    await update.message.reply_text(info_text)  # parse_mode не используется
+    await update.message.reply_text(info_text)
 
 def is_about_bot(text: str) -> bool:
     text_lower = text.lower()
@@ -274,6 +299,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Если упомянули бота или задали вопрос о нём
     if f"@{BOT_USERNAME}" in text or is_about_bot(text):
         await reply_bot_info(update)
+        return
+
+    # ---------- ПРОВЕРКА НА ТЕХНИЧЕСКИЕ РАБОТЫ ----------
+    if check_technical_works(text):
+        logger.info("Распознаны технические работы")
+        await msg.reply_text(
+            "🛠 Ведутся технические работы. Пожалуйста, подождите немного.\n"
+            "Если проблема останется, обратитесь к ответственному."
+        )
         return
 
     # ---------- ПРОВЕРКА НА ПРЯМОЙ ЗАПРОС ПОМОЩИ ----------
@@ -528,7 +562,7 @@ def main():
         except Exception as e:
             logger.error(f"Ошибка планирования: {e}")
 
-    logger.info("Поддержка-бот (полная версия) запущен!")
+    logger.info("Поддержка-бот (с расширенными фразами) запущен!")
     app.run_polling()
 
 if __name__ == "__main__":

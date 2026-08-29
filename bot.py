@@ -188,21 +188,6 @@ def check_keywords(text: str) -> bool:
             return True
     return False
 
-# ---------- ФУНКЦИЯ ДЛЯ ОТПРАВКИ УВЕДОМЛЕНИЯ ОТВЕТСТВЕННЫМ ----------
-async def notify_responsibles(context, username, problem_text):
-    responsible_users = load_responsible()
-    if responsible_users:
-        mentions = " ".join([f"@{u}" for u in responsible_users])
-        await context.bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            text=f"⚠️ Пользователь @{username} запросил помощь.\nСообщение: {problem_text}\nОтветственные: {mentions}"
-        )
-    else:
-        await context.bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            text="⚠️ Нет назначенных ответственных. Сообщение не отправлено."
-        )
-
 # ---------- ОБРАБОТЧИК КНОПОК ----------
 async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -228,6 +213,47 @@ async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text="⚠️ Нет назначенных ответственных. Сообщение не отправлено."
             )
 
+# ---------- ОТВЕТ НА ВОПРОСЫ О БОТЕ ----------
+async def reply_bot_info(update: Update):
+    """Отвечает на вопросы о возможностях бота"""
+    info_text = (
+        "🤖 *Мои возможности:*\n\n"
+        "🔹 Я помогаю сотрудникам ОЗ и консультантам по внедрению.\n"
+        "🔹 Если вы напишете проблему (например, «система не работает»), я дам совет и спрошу, помог ли он.\n"
+        "🔹 Если нажать «Не помогло», я отправлю уведомление ответственному.\n"
+        "🔹 Если вы напишете «нужна помощь» или «жардам керек», я сразу передам сообщение ответственному (без совета).\n\n"
+        "📋 *Команды для всех:*\n"
+        "/help – показать это сообщение\n"
+        "/ask <вопрос> – задать вопрос ИИ (если настроен)\n"
+        "/list_keywords – список ключевых слов\n"
+        "/list_responsible – список ответственных\n\n"
+        "🔒 *Админ-команды:*\n"
+        "/add_keyword <фраза> – добавить ключевую фразу\n"
+        "/remove_keyword <фраза> – удалить ключевую фразу\n"
+        "/add_responsible @username – добавить ответственного\n"
+        "/remove_responsible @username – удалить ответственного\n"
+        "/ban_user <id> – забанить пользователя\n"
+        "/unban_user <id> – разбанить пользователя\n"
+        "/list_banned – список забаненных\n\n"
+        "Если у вас есть проблема, просто опишите её — я помогу!"
+    )
+    await update.message.reply_text(info_text, parse_mode="Markdown")
+
+def is_about_bot(text: str) -> bool:
+    """Проверяет, содержит ли текст вопрос о боте"""
+    text_lower = text.lower()
+    patterns = [
+        r'\bты\s*(кто|чей|какой|как)\b',
+        r'\b(что|как|зачем|для чего)\s*ты\b',
+        r'\b(умеешь|можешь|делаешь|работаешь)\b',
+        r'\b(твоя функция|твои возможности|о тебе|расскажи о себе)\b',
+        r'\b(эмне кыла аласын|кантип иштейсин|сен ким|сен эмне кыласын)\b'
+    ]
+    for pattern in patterns:
+        if re.search(pattern, text_lower):
+            return True
+    return False
+
 # ---------- ОСНОВНЫЕ ОБРАБОТЧИКИ ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -247,21 +273,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.startswith('/'):
         return
 
-    if f"@{BOT_USERNAME}" in text:
-        await msg.reply_text("👋 Я бот для поддержки. Опишите проблему, и я дам совет.")
+    # Если упомянули бота или задали вопрос о нём
+    if f"@{BOT_USERNAME}" in text or is_about_bot(text):
+        await reply_bot_info(update)
         return
 
     # ---------- ПРОВЕРКА НА ПРЯМОЙ ЗАПРОС ПОМОЩИ ----------
     lower_text = text.lower()
     if any(phrase in lower_text for phrase in HELP_PHRASES):
         logger.info("Распознан запрос помощи")
-        # Отвечаем пользователю
         await msg.reply_text(
             "🆘 Я вас понял! Сейчас передам сообщение ответственному.\n"
             "Пожалуйста, опишите проблему подробнее, если не сделали этого ранее."
         )
         # Отправляем уведомление ответственным
-        await notify_responsibles(context, msg.from_user.username or "без юзернейма", text)
+        responsible_users = load_responsible()
+        if responsible_users:
+            mentions = " ".join([f"@{u}" for u in responsible_users])
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text=f"⚠️ Пользователь @{msg.from_user.username or 'без юзернейма'} запросил помощь.\n"
+                     f"Сообщение: {text}\n"
+                     f"Ответственные: {mentions}"
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                text="⚠️ Нет назначенных ответственных. Сообщение не отправлено."
+            )
         return
 
     # ---------- ПРОВЕРКА КЛЮЧЕВЫХ СЛОВ ----------
@@ -285,16 +324,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- КОМАНДЫ ДЛЯ ВСЕХ ----------
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 Бот для поддержки пользователей системы.\n\n"
-        "Команды:\n"
-        "/help – это сообщение\n"
-        "/ask <вопрос> – задать вопрос ИИ (если настроен)\n"
-        "/list_keywords – список ключевых слов\n"
-        "/list_responsible – список ответственных\n\n"
-        "Если у вас проблема, просто опишите её — я дам совет.\n"
-        "Если нужна помощь, напишите «жардам керек», «нужна помощь» или аналогичное — я передам сообщение ответственному."
-    )
+    await reply_bot_info(update)
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ai_client is None:

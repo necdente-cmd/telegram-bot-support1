@@ -11,13 +11,13 @@ from openai import OpenAI
 # ---------- НАСТРОЙКИ ----------
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
-    TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"
+    TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"  # замените на актуальный
 
-GROUP_CHAT_ID = -1004462437609
-ADMIN_IDS = [549890508]
-BOT_USERNAME = "oz_support_bot"
+GROUP_CHAT_ID = -1004462437609          # ID вашей группы
+ADMIN_IDS = [549890508]                 # ваш Telegram ID
+BOT_USERNAME = "oz_support_bot"         # username бота (без @)
 
-MORNING_TIME_UTC = "03:00"  # 09:00 по Бишкеку
+MORNING_TIME_UTC = "03:00"              # 09:00 по Бишкеку
 
 # ---------- СОВЕТЫ ----------
 ADVICE_LIST = [
@@ -89,8 +89,8 @@ def init_db():
     ]
     for kw in initial_keywords:
         c.execute("INSERT OR IGNORE INTO keywords (word) VALUES (?)", (kw,))
-    # Начальные ответственные
-    default_responsible = ["analyst"]  # без @
+    # Начальные ответственные (можно изменить или оставить пустым)
+    default_responsible = ["analyst"]
     for user in default_responsible:
         c.execute("INSERT OR IGNORE INTO responsible_users (username) VALUES (?)", (user,))
     conn.commit()
@@ -188,6 +188,45 @@ def check_keywords(text: str) -> bool:
             return True
     return False
 
+# ---------- ОТВЕТ НА ВОПРОСЫ О БОТЕ (БЕЗ MARKDOWN) ----------
+async def reply_bot_info(update: Update):
+    info_text = (
+        "🤖 Мои возможности:\n\n"
+        "🔹 Я помогаю сотрудникам ОЗ и консультантам по внедрению.\n"
+        "🔹 Если вы напишете проблему (например, «система не работает»), я дам совет и спрошу, помог ли он.\n"
+        "🔹 Если нажать «Не помогло», я отправлю уведомление ответственному.\n"
+        "🔹 Если вы напишете «нужна помощь» или «жардам керек», я сразу передам сообщение ответственному (без совета).\n\n"
+        "📋 Команды для всех:\n"
+        "/help – показать это сообщение\n"
+        "/ask <вопрос> – задать вопрос ИИ (если настроен)\n"
+        "/list_keywords – список ключевых слов\n"
+        "/list_responsible – список ответственных\n\n"
+        "🔒 Админ-команды:\n"
+        "/add_keyword <фраза> – добавить ключевую фразу\n"
+        "/remove_keyword <фраза> – удалить ключевую фразу\n"
+        "/add_responsible @username – добавить ответственного\n"
+        "/remove_responsible @username – удалить ответственного\n"
+        "/ban_user <id> – забанить пользователя\n"
+        "/unban_user <id> – разбанить пользователя\n"
+        "/list_banned – список забаненных\n\n"
+        "Если у вас есть проблема, просто опишите её — я помогу!"
+    )
+    await update.message.reply_text(info_text)  # parse_mode не используется
+
+def is_about_bot(text: str) -> bool:
+    text_lower = text.lower()
+    patterns = [
+        r'\bты\s*(кто|чей|какой|как)\b',
+        r'\b(что|как|зачем|для чего)\s*ты\b',
+        r'\b(умеешь|можешь|делаешь|работаешь)\b',
+        r'\b(твоя функция|твои возможности|о тебе|расскажи о себе)\b',
+        r'\b(эмне кыла аласын|кантип иштейсин|сен ким|сен эмне кыласын)\b'
+    ]
+    for pattern in patterns:
+        if re.search(pattern, text_lower):
+            return True
+    return False
+
 # ---------- ОБРАБОТЧИК КНОПОК ----------
 async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -212,47 +251,6 @@ async def advice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=GROUP_CHAT_ID,
                 text="⚠️ Нет назначенных ответственных. Сообщение не отправлено."
             )
-
-# ---------- ОТВЕТ НА ВОПРОСЫ О БОТЕ ----------
-async def reply_bot_info(update: Update):
-    """Отвечает на вопросы о возможностях бота"""
-    info_text = (
-        "🤖 *Мои возможности:*\n\n"
-        "🔹 Я помогаю сотрудникам ОЗ и консультантам по внедрению.\n"
-        "🔹 Если вы напишете проблему (например, «система не работает»), я дам совет и спрошу, помог ли он.\n"
-        "🔹 Если нажать «Не помогло», я отправлю уведомление ответственному.\n"
-        "🔹 Если вы напишете «нужна помощь» или «жардам керек», я сразу передам сообщение ответственному (без совета).\n\n"
-        "📋 *Команды для всех:*\n"
-        "/help – показать это сообщение\n"
-        "/ask <вопрос> – задать вопрос ИИ (если настроен)\n"
-        "/list_keywords – список ключевых слов\n"
-        "/list_responsible – список ответственных\n\n"
-        "🔒 *Админ-команды:*\n"
-        "/add_keyword <фраза> – добавить ключевую фразу\n"
-        "/remove_keyword <фраза> – удалить ключевую фразу\n"
-        "/add_responsible @username – добавить ответственного\n"
-        "/remove_responsible @username – удалить ответственного\n"
-        "/ban_user <id> – забанить пользователя\n"
-        "/unban_user <id> – разбанить пользователя\n"
-        "/list_banned – список забаненных\n\n"
-        "Если у вас есть проблема, просто опишите её — я помогу!"
-    )
-    await update.message.reply_text(info_text, parse_mode="Markdown")
-
-def is_about_bot(text: str) -> bool:
-    """Проверяет, содержит ли текст вопрос о боте"""
-    text_lower = text.lower()
-    patterns = [
-        r'\bты\s*(кто|чей|какой|как)\b',
-        r'\b(что|как|зачем|для чего)\s*ты\b',
-        r'\b(умеешь|можешь|делаешь|работаешь)\b',
-        r'\b(твоя функция|твои возможности|о тебе|расскажи о себе)\b',
-        r'\b(эмне кыла аласын|кантип иштейсин|сен ким|сен эмне кыласын)\b'
-    ]
-    for pattern in patterns:
-        if re.search(pattern, text_lower):
-            return True
-    return False
 
 # ---------- ОСНОВНЫЕ ОБРАБОТЧИКИ ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -286,7 +284,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🆘 Я вас понял! Сейчас передам сообщение ответственному.\n"
             "Пожалуйста, опишите проблему подробнее, если не сделали этого ранее."
         )
-        # Отправляем уведомление ответственным
         responsible_users = load_responsible()
         if responsible_users:
             mentions = " ".join([f"@{u}" for u in responsible_users])
@@ -531,7 +528,7 @@ def main():
         except Exception as e:
             logger.error(f"Ошибка планирования: {e}")
 
-    logger.info("Поддержка-бот (с админ-командами и обработкой запросов помощи) запущен!")
+    logger.info("Поддержка-бот (полная версия) запущен!")
     app.run_polling()
 
 if __name__ == "__main__":

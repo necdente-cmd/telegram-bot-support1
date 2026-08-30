@@ -9,13 +9,15 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes, Com
 from openai import OpenAI
 
 # ---------- НАСТРОЙКИ ----------
-TOKEN = os.environ.get("BOT_TOKEN")
-if not TOKEN:
-    TOKEN = "8960258146:AAEooW9g65ngBevd9lZYfJhSGA-qorb63lg"
+TOKEN = os.environ["BOT_TOKEN"] # Если нет переменной, бот выдаст ошибку и не запустится (это правильно, вы сразу заметите проблему)
 
-GROUP_CHAT_ID = -1004462437609
-ADMIN_IDS = [549890508]
-BOT_USERNAME = "oz_support_bot"
+# Получаем строку из переменной (например: "549890508,123456789")
+admin_ids_str = os.environ.get("ADMIN_IDS", "549890508") 
+# Преобразуем строку в список чисел. Если переменной нет, используем ваш текущий ID как запасной (но лучше добавить на Railway).
+ADMIN_IDS = [int(x.strip()) for x in admin_ids_str.split(",") if x.strip().isdigit()]
+
+if not ADMIN_IDS:
+    logging.warning("⚠️ ВНИМАНИЕ: Переменная ADMIN_IDS не задана! Никто не сможет использовать админ-команды.")
 
 MORNING_TIME_UTC = "03:00"  # 09:00 по Бишкеку
 
